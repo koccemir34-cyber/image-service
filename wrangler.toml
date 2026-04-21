@@ -1,0 +1,11 @@
+name = "telegram-hatirlatma-botu"
+main = "worker.js"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[[kv_namespaces]]
+binding = "REMINDERS"
+id = "1d4f7929d11f453c8e43b351323e239d"
+
+[vars]
+IMAGE_SERVICE_URL = "RENDER_URL_BURAYA"
