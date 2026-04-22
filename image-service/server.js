@@ -1,6 +1,6 @@
 import express from 'express';
 import { Resvg } from '@resvg/resvg-js';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -8,6 +8,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const fontBuffer = readFileSync(join(__dirname, 'inter.ttf'));
 const LOGO_B64 = readFileSync(join(__dirname, 'logo_b64.txt'), 'utf8').trim();
 const SECRET = process.env.IMAGE_SECRET || '';
+
+// Emoji desteği için: NotoEmoji-Regular.ttf dosyasını bu klasöre koy
+// İndir: https://github.com/googlefonts/noto-emoji/raw/main/fonts/NotoEmoji-Regular.ttf
+const emojiPath = join(__dirname, 'NotoEmoji-Regular.ttf');
+const emojiFontBuffer = existsSync(emojiPath) ? readFileSync(emojiPath) : null;
+if (!emojiFontBuffer) console.warn('⚠️  NotoEmoji-Regular.ttf bulunamadı — emoji desteği kapalı.');
 
 const app = express();
 app.use(express.json({ limit: '20kb' }));
@@ -22,10 +28,11 @@ app.post('/generate', (req, res) => {
   if (!text) return res.status(400).json({ error: 'text required' });
 
   try {
+    const fontBuffers = emojiFontBuffer ? [fontBuffer, emojiFontBuffer] : [fontBuffer];
     const resvg = new Resvg(buildSvg(text), {
       font: {
         loadSystemFonts: false,
-        fontBuffers: [fontBuffer],
+        fontBuffers,
         defaultFontFamily: 'Inter',
         sansSerifFamily: 'Inter',
       },
@@ -45,15 +52,15 @@ app.listen(process.env.PORT || 3000, () =>
 );
 
 function buildSvg(rawText) {
-  const W = 1080, H = 1920;
+  const W = 1080;
   const CARD_W = 980;
   const CARD_X = (W - CARD_W) / 2;
   const PAD = 64;
   const AVA_R = 58;
   const avaCX = CARD_X + PAD + AVA_R;
-  const FS = 46;
-  const LH = 72;
-  const MAX_CH = 26;
+  const FS = 50;
+  const LH = 80;
+  const MAX_CH = 24;
 
   const paragraphs = rawText.split('\n');
   const lines = [];
@@ -65,9 +72,9 @@ function buildSvg(rawText) {
   const PROF_H = AVA_R * 2;
   const SEP_GAP = 36;
   const SEP_H = 2;
-  const TEXT_GAP = 44;
+  const TEXT_GAP = 48;
   const TEXT_H = lines.reduce((a, l) => a + (l === null ? LH * 0.65 : LH), 0);
-  const BOT_GAP = 50;
+  const BOT_GAP = 60;
   const FOOT_H = 38;
 
   const CARD_H = Math.max(
@@ -75,7 +82,10 @@ function buildSvg(rawText) {
     PAD + PROF_H + SEP_GAP + SEP_H + TEXT_GAP + TEXT_H + BOT_GAP + FOOT_H + PAD
   );
 
-  const CARD_Y = Math.max(120, Math.round((H - CARD_H) / 2) - 60);
+  // H dinamik: içerik ne kadar uzun olursa olsun kart görüntüden taşmaz
+  const CARD_Y = 120;
+  const H = Math.max(1920, CARD_Y + CARD_H + 120);
+
   const avaCY = CARD_Y + PAD + AVA_R;
   const nameX = avaCX + AVA_R + 22;
   const nameY = avaCY - 14;
@@ -86,10 +96,13 @@ function buildSvg(rawText) {
   const sepY = CARD_Y + PAD + PROF_H + SEP_GAP;
 
   let curY = sepY + SEP_H + TEXT_GAP + FS * 0.82;
+  const fontFamily = emojiFontBuffer ? 'Inter, Noto Emoji' : 'Inter';
+
   const textEls = lines.map(line => {
     if (line === null) { curY += LH * 0.65; return ''; }
     const el = `<text x="${CARD_X + PAD}" y="${Math.round(curY)}"
-      font-family="Inter" font-size="${FS}" fill="#0F1419"
+      font-family="${fontFamily}" font-size="${FS}" font-weight="600" fill="#0F1419"
+      stroke="#0F1419" stroke-width="0.5" paint-order="stroke fill"
       text-anchor="start">${escapeXml(line)}</text>`;
     curY += LH;
     return el;
