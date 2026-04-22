@@ -6,13 +6,13 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fontBuffer = readFileSync(join(__dirname, 'inter.ttf'));
-const LOGO_B64 = readFileSync(join(__dirname, 'logo_b64.txt'), 'utf8').trim();
-const SECRET = process.env.IMAGE_SECRET || '';
+const LOGO_B64   = readFileSync(join(__dirname, 'logo_b64.txt'), 'utf8').trim();
+const SECRET     = process.env.IMAGE_SECRET || '';
 
 const emojiCache = new Map();
 
 const app = express();
-app.use(express.json({ limit: '20kb' }));
+app.use(express.json({ limit: '15mb' }));
 
 app.get('/', (_, res) => res.send('Image service active ✅'));
 
@@ -20,11 +20,11 @@ app.post('/generate', async (req, res) => {
   if (SECRET && req.headers['x-secret'] !== SECRET)
     return res.status(401).json({ error: 'unauthorized' });
 
-  const { text } = req.body;
+  const { text, photoB64 } = req.body;
   if (!text) return res.status(400).json({ error: 'text required' });
 
   try {
-    const svg = await buildSvg(text);
+    const svg = await buildSvg(text, photoB64 || null);
     const resvg = new Resvg(svg, {
       font: {
         loadSystemFonts: false,
@@ -47,7 +47,7 @@ app.listen(process.env.PORT || 3000, () =>
   console.log('Ready on port', process.env.PORT || 3000)
 );
 
-// ── Emoji: Twemoji CDN'den PNG çek, base64 olarak göm ──────────────────────
+// ── Emoji: Twemoji CDN ───────────────────────────────────────────────────────
 const EMOJI_RE = /\p{Emoji_Presentation}|\p{Extended_Pictographic}/gu;
 
 async function fetchEmoji(emoji) {
@@ -89,7 +89,7 @@ function segmentLine(text) {
 function displayLen(s) {
   const re = new RegExp(EMOJI_RE.source, 'gu');
   let len = s.length, m;
-  while ((m = re.exec(s)) !== null) len += 1; // emoji = 2 birim genişlik
+  while ((m = re.exec(s)) !== null) len += 1;
   return len;
 }
 
@@ -115,19 +115,26 @@ function wrapText(text, max) {
   return lines.length ? lines : [''];
 }
 
-// ── SVG oluştur ─────────────────────────────────────────────────────────────
-async function buildSvg(rawText) {
-  const W      = 1080;
-  const CARD_W = 960;
-  const CARD_X = (W - CARD_W) / 2;
-  const PAD    = 60;
-  const AVA_R  = 54;
-  const avaCX  = CARD_X + PAD + AVA_R;
-  const FS     = 48;
-  const LH     = 78;
-  const MAX_CH = 23;
-  const CHAR_W = FS * 0.57;
+// ── SVG ─────────────────────────────────────────────────────────────────────
+async function buildSvg(rawText, photoB64) {
+  const W        = 1080;
+  const CARD_W   = 960;
+  const CARD_X   = (W - CARD_W) / 2;
+  const PAD      = 60;
+  const AVA_R    = 54;
+  const avaCX    = CARD_X + PAD + AVA_R;
+  const FS       = 46;
+  const LH       = 74;
+  const MAX_CH   = 24;
+  const CHAR_W   = FS * 0.57;
   const EMOJI_SZ = FS * 1.05;
+  const RX       = 28;
+  const ACC_H    = 10;
+
+  // Fotoğraf boyutları
+  const PHOTO_H   = photoB64 ? 430 : 0;
+  const PHOTO_GAP = photoB64 ? 36  : 0;
+  const PHOTO_BOT = photoB64 ? 16  : 0;
 
   const paragraphs = rawText.split('\n');
   const lines = [];
@@ -136,7 +143,7 @@ async function buildSvg(rawText) {
     if (p < paragraphs.length - 1) lines.push(null);
   }
 
-  // Tüm emoji'leri önceden çek
+  // Emoji'leri önceden çek
   const allEmoji = new Set();
   for (const l of lines) {
     if (!l) continue;
@@ -144,47 +151,54 @@ async function buildSvg(rawText) {
   }
   await Promise.all([...allEmoji].map(fetchEmoji));
 
-  const PROF_H  = AVA_R * 2;
-  const SEP_GAP = 32;
-  const SEP_H   = 2;
-  const TEXT_GAP = 44;
-  const TEXT_H  = lines.reduce((a, l) => a + (l === null ? LH * 0.6 : LH), 0);
-  const BOT_GAP = 56;
-  const FOOT_H  = 36;
-  const ACC_H   = 10; // kırmızı accent çubuğu
+  const PROF_H   = AVA_R * 2;
+  const SEP_GAP  = 30;
+  const SEP_H    = 2;
+  const TEXT_GAP = 40;
+  const TEXT_H   = lines.reduce((a, l) => a + (l === null ? LH * 0.6 : LH), 0);
+  const BOT_GAP  = 50;
+  const FOOT_H   = 34;
 
   const CARD_H = Math.max(
     700,
-    ACC_H + PAD + PROF_H + SEP_GAP + SEP_H + TEXT_GAP + TEXT_H + BOT_GAP + FOOT_H + PAD
+    ACC_H + PAD + PROF_H + SEP_GAP + SEP_H + TEXT_GAP + TEXT_H +
+    PHOTO_GAP + PHOTO_H + PHOTO_BOT + BOT_GAP + FOOT_H + PAD
   );
 
   const CARD_Y = 110;
   const H = Math.max(1920, CARD_Y + CARD_H + 110);
 
-  const avaCY  = CARD_Y + ACC_H + PAD + AVA_R;
-  const nameX  = avaCX + AVA_R + 20;
-  const nameY  = avaCY - 12;
+  const avaCY   = CARD_Y + ACC_H + PAD + AVA_R;
+  const nameX   = avaCX + AVA_R + 20;
+  const nameY   = avaCY - 12;
   const handleY = avaCY + 26;
-  const LOGO_SZ = 62;
-  const logoX  = CARD_X + CARD_W - PAD - LOGO_SZ;
-  const logoY  = CARD_Y + ACC_H + PAD + (AVA_R - LOGO_SZ / 2);
-  const sepY   = CARD_Y + ACC_H + PAD + PROF_H + SEP_GAP;
+  const LOGO_SZ = 60;
+  const logoX   = CARD_X + CARD_W - PAD - LOGO_SZ;
+  const logoY   = CARD_Y + ACC_H + PAD + (AVA_R - LOGO_SZ / 2);
+  const sepY    = CARD_Y + ACC_H + PAD + PROF_H + SEP_GAP;
+  const footY   = CARD_Y + CARD_H - PAD - 4;
+  const footX   = CARD_X + CARD_W - PAD;
 
+  // Fotoğraf pozisyonu (metin bittikten sonra)
+  const textEndY = sepY + SEP_H + TEXT_GAP + TEXT_H;
+  const photoY   = textEndY + PHOTO_GAP;
+  const photoW   = CARD_W - PAD * 2;
+
+  // Metin elementleri
   let curY = sepY + SEP_H + TEXT_GAP + FS * 0.82;
-
-  // Metin + emoji elementleri
   const els = [];
+
   for (const line of lines) {
     if (line === null) { curY += LH * 0.6; continue; }
 
-    const segs = segmentLine(line);
+    const segs     = segmentLine(line);
     const hasEmoji = segs.some(s => s.type === 'emoji');
 
     if (!hasEmoji) {
       els.push(
         `<text x="${CARD_X + PAD}" y="${Math.round(curY)}"
           font-family="Inter" font-size="${FS}" font-weight="700" fill="#111827"
-          stroke="#111827" stroke-width="0.35" paint-order="stroke fill">${escapeXml(line)}</text>`
+          stroke="#111827" stroke-width="0.3" paint-order="stroke fill">${escapeXml(line)}</text>`
       );
     } else {
       let x = CARD_X + PAD;
@@ -193,7 +207,7 @@ async function buildSvg(rawText) {
           els.push(
             `<text x="${Math.round(x)}" y="${Math.round(curY)}"
               font-family="Inter" font-size="${FS}" font-weight="700" fill="#111827"
-              stroke="#111827" stroke-width="0.35" paint-order="stroke fill">${escapeXml(seg.value)}</text>`
+              stroke="#111827" stroke-width="0.3" paint-order="stroke fill">${escapeXml(seg.value)}</text>`
           );
           x += seg.value.length * CHAR_W;
         } else if (seg.type === 'emoji') {
@@ -205,16 +219,24 @@ async function buildSvg(rawText) {
                 href="${dataUrl}"/>`
             );
           }
-          x += EMOJI_SZ + 3;
+          x += EMOJI_SZ + 4;
         }
       }
     }
     curY += LH;
   }
 
-  const footY = CARD_Y + CARD_H - PAD - 4;
-  const footX = CARD_X + CARD_W - PAD;
-  const RX    = 28;
+  // Fotoğraf elementi
+  const photoEl = photoB64 ? `
+  <clipPath id="photoClip">
+    <rect x="${CARD_X + PAD}" y="${Math.round(photoY)}" width="${photoW}" height="${PHOTO_H}" rx="16" ry="16"/>
+  </clipPath>` : '';
+
+  const photoImg = photoB64 ? `
+  <image x="${CARD_X + PAD}" y="${Math.round(photoY)}" width="${photoW}" height="${PHOTO_H}"
+         href="data:image/jpeg;base64,${photoB64}"
+         clip-path="url(#photoClip)"
+         preserveAspectRatio="xMidYMid slice"/>` : '';
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"
@@ -223,10 +245,11 @@ async function buildSvg(rawText) {
     <clipPath id="ava">
       <circle cx="${avaCX}" cy="${avaCY}" r="${AVA_R}"/>
     </clipPath>
+    ${photoEl}
     <filter id="shadow" x="-6%" y="-4%" width="124%" height="118%">
       <feDropShadow dx="0" dy="14" stdDeviation="26" flood-color="#000" flood-opacity="0.35"/>
     </filter>
-    <linearGradient id="bg" x1="0" y1="0" x2="0.4" y2="1">
+    <linearGradient id="bg" x1="0" y1="0" x2="0.3" y2="1">
       <stop offset="0%" stop-color="#0D1117"/>
       <stop offset="100%" stop-color="#161B27"/>
     </linearGradient>
@@ -235,20 +258,20 @@ async function buildSvg(rawText) {
       <stop offset="100%" stop-color="#EF4444"/>
     </linearGradient>
     <linearGradient id="sep" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="#E5E7EB"/>
+      <stop offset="0%" stop-color="#F3F4F6"/>
       <stop offset="50%" stop-color="#D1D5DB"/>
-      <stop offset="100%" stop-color="#E5E7EB"/>
+      <stop offset="100%" stop-color="#F3F4F6"/>
     </linearGradient>
   </defs>
 
   <!-- Arka plan -->
   <rect width="${W}" height="${H}" fill="url(#bg)"/>
 
-  <!-- Kart gölge + gövde -->
+  <!-- Kart -->
   <rect x="${CARD_X}" y="${CARD_Y}" width="${CARD_W}" height="${CARD_H}"
         rx="${RX}" ry="${RX}" fill="#FFFFFF" filter="url(#shadow)"/>
 
-  <!-- Kırmızı accent şerit (üst) -->
+  <!-- Kırmızı accent (üst) -->
   <rect x="${CARD_X}" y="${CARD_Y}" width="${CARD_W}" height="${ACC_H + RX}"
         rx="${RX}" ry="${RX}" fill="url(#accent)"/>
   <rect x="${CARD_X}" y="${CARD_Y + ACC_H}" width="${CARD_W}" height="${RX}" fill="#FFFFFF"/>
@@ -264,22 +287,25 @@ async function buildSvg(rawText) {
   <text x="${nameX}" y="${nameY}"
         font-family="Inter" font-size="25" font-weight="800" fill="#111827">SELHATTİN KOÇ İNŞAAT TAAHHÜT</text>
   <text x="${nameX}" y="${handleY}"
-        font-family="Inter" font-size="22" fill="#6B7280">@selhattinkocinsaat</text>
+        font-family="Inter" font-size="21" fill="#6B7280">@selhattinkocinsaat</text>
 
   <!-- Sağ logo -->
   <image x="${logoX}" y="${logoY}" width="${LOGO_SZ}" height="${LOGO_SZ}"
          href="data:image/png;base64,${LOGO_B64}"/>
 
-  <!-- Ayırıcı çizgi -->
+  <!-- Ayırıcı -->
   <line x1="${CARD_X + PAD}" y1="${sepY}" x2="${CARD_X + CARD_W - PAD}" y2="${sepY}"
         stroke="url(#sep)" stroke-width="${SEP_H}"/>
 
-  <!-- İçerik -->
+  <!-- Metin -->
   ${els.join('\n  ')}
+
+  <!-- Kullanıcı fotoğrafı (varsa) -->
+  ${photoImg}
 
   <!-- Footer -->
   <text x="${footX}" y="${footY}"
-        font-family="Inter" font-size="20" fill="#9CA3AF" text-anchor="end">SELHATTİN KOÇ İNŞAAT TAAHHÜT</text>
+        font-family="Inter" font-size="19" fill="#9CA3AF" text-anchor="end">SELHATTİN KOÇ İNŞAAT TAAHHÜT</text>
 </svg>`;
 }
 

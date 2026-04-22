@@ -37,8 +37,9 @@ async function handleWebhook(update, env) {
     if (!update.message) return;
 
     const chatId   = update.message.chat.id;
-    const text     = update.message.text?.trim() || "";
+    const text     = (update.message.text || update.message.caption || "").trim();
     const name     = update.message.from?.first_name || "Kullanıcı";
+    const photos   = update.message.photo || null;
     const stateKey = `user:${chatId}:state`;
 
     let state = { step: STATES.IDLE };
@@ -51,7 +52,7 @@ async function handleWebhook(update, env) {
       if (text === "/liste")           return handleList(chatId, env);
       if (text === "/basarili")        return handleBasarili(chatId, env);
       if (text.startsWith("/sil"))     return handleDelete(text, chatId, env);
-      if (text.startsWith("/story"))   return handleStory(text, chatId, env);
+      if (text.startsWith("/story"))   return handleStory(text, chatId, env, photos);
 
       if (text === "/tekhatirlat") {
         state = { step: STATES.ONCE_DATE, chatId };
@@ -198,37 +199,48 @@ async function handleBasarili(chatId, env) {
 }
 
 // ── Story ─────────────────────────────────────────────────────────────────────
-async function handleStory(text, chatId, env) {
+async function handleStory(text, chatId, env, photos) {
   const storyText = text.replace(/^\/story\s*/i, '').trim();
   if (!storyText)
-    return send(chatId, "❌ *Kullanım:* `/story Yazınız burada`\n\nÖrnek: `/story Bugün harika bir iş çıkardık!`", env);
+    return send(chatId, "❌ *Kullanım:*\n`/story Yazınız burada`\n\nFotoğraf ile kullanmak için: fotoğrafı seç, caption olarak `/story Yazınız` yaz.", env);
 
   await send(chatId, "⏳ Görsel oluşturuluyor...", env);
 
   try {
+    // Fotoğraf varsa Telegram'dan indir
+    let photoB64 = null;
+    if (photos && photos.length > 0) {
+      const largest = photos[photos.length - 1];
+      const fileRes = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/getFile?file_id=${largest.file_id}`);
+      const fileData = await fileRes.json();
+      if (fileData.ok) {
+        const photoRes = await fetch(`https://api.telegram.org/file/bot${env.BOT_TOKEN}/${fileData.result.file_path}`);
+        const photoBuf = await photoRes.arrayBuffer();
+        photoB64 = bufToB64(photoBuf);
+      }
+    }
+
     const imgRes = await fetch(`${env.IMAGE_SERVICE_URL}/generate`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-secret': env.IMAGE_SECRET
-      },
-      body: JSON.stringify({ text: storyText })
+      headers: { 'Content-Type': 'application/json', 'x-secret': env.IMAGE_SECRET },
+      body: JSON.stringify({ text: storyText, photoB64 })
     });
 
     if (!imgRes.ok) throw new Error(`Image service: ${imgRes.status}`);
 
     const pngBuf = await imgRes.arrayBuffer();
-    const form = new FormData();
-    form.append('chat_id', String(chatId));
-    form.append('photo', new Blob([pngBuf], { type: 'image/png' }), 'story.png');
+    const form   = new FormData();
+    form.append('chat_id',  String(chatId));
+    form.append('document', new Blob([pngBuf], { type: 'image/png' }), 'story.png');
+    form.append('caption',  '✅ Story görseliniz hazır! Instagram\'a yükleyebilirsiniz.');
 
-    const tgRes = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/sendPhoto`, {
+    const tgRes = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/sendDocument`, {
       method: 'POST',
       body: form
     });
 
     if (!tgRes.ok) {
-      console.error("❌ sendPhoto error:", await tgRes.text());
+      console.error("❌ sendDocument error:", await tgRes.text());
       return send(chatId, "⚠️ Görsel gönderilemedi. Tekrar deneyin.", env);
     }
   } catch (err) {
@@ -237,6 +249,15 @@ async function handleStory(text, chatId, env) {
   }
 
   return new Response("ok");
+}
+
+function bufToB64(buf) {
+  const bytes = new Uint8Array(buf);
+  let s = '';
+  const chunk = 8192;
+  for (let i = 0; i < bytes.length; i += chunk)
+    s += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  return btoa(s);
 }
 
 // ── Tek seferlik hatırlatma akışı ─────────────────────────────────────────────
