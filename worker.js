@@ -10,7 +10,9 @@ const STATES = {
   RECURRING_TIME: 'recurring_time',
   RECURRING_MESSAGE: 'recurring_message',
   REMINDER_HOURLY: 'reminder_hourly',
-  DELETE_CONFIRM: 'delete_confirm'
+  DELETE_CONFIRM: 'delete_confirm',
+  STORY_TEXT: 'story_text',
+  STORY_PHOTO: 'story_photo'
 };
 
 export default {
@@ -52,7 +54,12 @@ async function handleWebhook(update, env) {
       if (text === "/liste")           return handleList(chatId, env);
       if (text === "/basarili")        return handleBasarili(chatId, env);
       if (text.startsWith("/sil"))     return handleDelete(text, chatId, env);
-      if (text.startsWith("/story"))   return handleStory(text, chatId, env, photos);
+      if (text === "/story") {
+        state = { step: STATES.STORY_TEXT, chatId };
+        await saveState(chatId, state, env);
+        return send(chatId, "📝 *Story Oluştur*\n\nGörsel üzerine yazılacak metni girin:", env);
+      }
+      if (text.startsWith("/story "))  return handleStoryInline(text, chatId, state, env, photos);
 
       if (text === "/tekhatirlat") {
         state = { step: STATES.ONCE_DATE, chatId };
@@ -78,6 +85,8 @@ async function handleWebhook(update, env) {
       case STATES.RECURRING_MESSAGE: return handleRecurringMessage(text, chatId, state, env);
       case STATES.REMINDER_HOURLY:   return handleReminderHourly(text, chatId, state, env);
       case STATES.DELETE_CONFIRM:    return resetState(chatId, env).then(() => send(chatId, "🔄 İşlem iptal edildi.", env));
+      case STATES.STORY_TEXT:        return handleStoryText(text, chatId, state, env);
+      case STATES.STORY_PHOTO:       return handleStoryPhotoStep(text, chatId, state, env, photos);
     }
 
     return send(chatId, "⚠️ Beklenmeyen durum. `/start` ile yeniden başlayın.", env);
@@ -199,24 +208,46 @@ async function handleBasarili(chatId, env) {
 }
 
 // ── Story ─────────────────────────────────────────────────────────────────────
-async function handleStory(text, chatId, env, photos) {
+
+// /story yazı şeklinde tek adımda (eski yol, hâlâ destekleniyor)
+async function handleStoryInline(text, chatId, state, env, photos) {
   const storyText = text.replace(/^\/story\s*/i, '').trim();
-  if (!storyText)
-    return send(chatId, "❌ *Kullanım:*\n`/story Yazınız burada`\n\nFotoğraf ile kullanmak için: fotoğrafı seç, caption olarak `/story Yazınız` yaz.", env);
+  if (!storyText) return send(chatId, "❌ Metin boş. `/story Yazınız` şeklinde deneyin.", env);
+  await generateAndSendStory(storyText, chatId, env, photos);
+}
 
+// Adım 1: metni al, fotoğraf adımına geç
+async function handleStoryText(text, chatId, state, env) {
+  if (!text || text.length < 2)
+    return send(chatId, "❌ Metin çok kısa, tekrar girin:", env);
+  state.storyText = text;
+  state.step = STATES.STORY_PHOTO;
+  await saveState(chatId, state, env);
+  return send(chatId, `✅ Metin kaydedildi.\n\n📸 Şimdi bir *fotoğraf gönderin* ya da fotoğrafsız devam etmek için *Hayır* yazın.`, env);
+}
+
+// Adım 2: fotoğraf al (ya da geç) ve üret
+async function handleStoryPhotoStep(text, chatId, state, env, photos) {
+  await resetState(chatId, env);
+  const hasPhoto = photos && photos.length > 0;
+  const skip     = text.trim().toLowerCase() === 'hayır';
+  if (!hasPhoto && !skip)
+    return send(chatId, "📸 Fotoğraf gönderin veya *Hayır* yazın.", env);
+  await generateAndSendStory(state.storyText, chatId, env, hasPhoto ? photos : null);
+}
+
+// Ortak üretim fonksiyonu
+async function generateAndSendStory(storyText, chatId, env, photos) {
   await send(chatId, "⏳ Görsel oluşturuluyor...", env);
-
   try {
-    // Fotoğraf varsa Telegram'dan indir
     let photoB64 = null;
     if (photos && photos.length > 0) {
       const largest = photos[photos.length - 1];
-      const fileRes = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/getFile?file_id=${largest.file_id}`);
+      const fileRes  = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/getFile?file_id=${largest.file_id}`);
       const fileData = await fileRes.json();
       if (fileData.ok) {
         const photoRes = await fetch(`https://api.telegram.org/file/bot${env.BOT_TOKEN}/${fileData.result.file_path}`);
-        const photoBuf = await photoRes.arrayBuffer();
-        photoB64 = bufToB64(photoBuf);
+        photoB64 = bufToB64(await photoRes.arrayBuffer());
       }
     }
 
@@ -225,30 +256,23 @@ async function handleStory(text, chatId, env, photos) {
       headers: { 'Content-Type': 'application/json', 'x-secret': env.IMAGE_SECRET },
       body: JSON.stringify({ text: storyText, photoB64 })
     });
-
     if (!imgRes.ok) throw new Error(`Image service: ${imgRes.status}`);
 
     const pngBuf = await imgRes.arrayBuffer();
     const form   = new FormData();
     form.append('chat_id',  String(chatId));
     form.append('document', new Blob([pngBuf], { type: 'image/png' }), 'story.png');
-    form.append('caption',  '✅ Story görseliniz hazır! Instagram\'a yükleyebilirsiniz.');
+    form.append('caption',  "✅ Story görseliniz hazır! Instagram'a yükleyebilirsiniz.");
 
-    const tgRes = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/sendDocument`, {
-      method: 'POST',
-      body: form
-    });
-
+    const tgRes = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/sendDocument`, { method: 'POST', body: form });
     if (!tgRes.ok) {
       console.error("❌ sendDocument error:", await tgRes.text());
-      return send(chatId, "⚠️ Görsel gönderilemedi. Tekrar deneyin.", env);
+      await send(chatId, "⚠️ Görsel gönderilemedi. Tekrar deneyin.", env);
     }
   } catch (err) {
     console.error("❌ STORY ERROR:", err);
-    return send(chatId, "⚠️ Görsel oluşturulurken hata oluştu.", env);
+    await send(chatId, "⚠️ Görsel oluşturulurken hata oluştu.", env);
   }
-
-  return new Response("ok");
 }
 
 function bufToB64(buf) {
