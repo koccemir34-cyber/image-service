@@ -230,9 +230,11 @@ async function handleStoryPhotoStep(text, chatId, state, env, photos) {
 async function generateAndSendStory(storyText, chatId, env, photos) {
   await send(chatId, "⏳ Görsel oluşturuluyor...", env);
   try {
-    let photoB64 = null;
+    let photoB64 = null, photoWidth = null, photoHeight = null;
     if (photos && photos.length > 0) {
       const largest = photos[photos.length - 1];
+      photoWidth  = largest.width;
+      photoHeight = largest.height;
       const fileRes  = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/getFile?file_id=${largest.file_id}`);
       const fileData = await fileRes.json();
       if (fileData.ok) {
@@ -244,7 +246,7 @@ async function generateAndSendStory(storyText, chatId, env, photos) {
     const imgRes = await fetch(`${env.IMAGE_SERVICE_URL}/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-secret': env.IMAGE_SECRET },
-      body: JSON.stringify({ text: storyText, photoB64 })
+      body: JSON.stringify({ text: storyText, photoB64, photoWidth, photoHeight })
     });
     if (!imgRes.ok) throw new Error(`Image service: ${imgRes.status}`);
 

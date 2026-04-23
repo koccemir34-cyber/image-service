@@ -21,12 +21,12 @@ app.post('/generate', async (req, res) => {
   if (SECRET && req.headers['x-secret'] !== SECRET)
     return res.status(401).json({ error: 'unauthorized' });
 
-  const { text, photoB64 } = req.body;
+  const { text, photoB64, photoWidth, photoHeight } = req.body;
   if (!text) return res.status(400).json({ error: 'text required' });
   if (text.length > 600) return res.status(400).json({ error: 'text too long' });
 
   try {
-    const svg = await buildSvg(text, photoB64 || null);
+    const svg = await buildSvg(text, photoB64 || null, photoWidth || null, photoHeight || null);
     const resvg = new Resvg(svg, {
       font: {
         loadSystemFonts: false,
@@ -117,7 +117,7 @@ function wrapText(text, max) {
 }
 
 // ── SVG ─────────────────────────────────────────────────────────────────────
-async function buildSvg(rawText, photoB64) {
+async function buildSvg(rawText, photoB64, photoWidth, photoHeight) {
   const W      = 1080;
   const CARD_W = 1040;
   const CARD_X = (W - CARD_W) / 2;   // 20px kenar boşluğu
@@ -135,10 +135,14 @@ async function buildSvg(rawText, photoB64) {
   const CHAR_W = FS * 0.57;
   const EMOJI_SZ = FS * 1.05;
 
-  // Fotoğraf boyutları
-  const PHOTO_H   = photoB64 ? 460 : 0;
-  const PHOTO_GAP = photoB64 ? 44  : 0;
-  const PHOTO_BOT = photoB64 ? 24  : 0;
+  // Fotoğraf boyutları — gerçek en/boy oranını koru, max 900px
+  const PHOTO_H   = photoB64
+    ? (photoWidth && photoHeight
+        ? Math.min(Math.round(TEXT_W * photoHeight / photoWidth), 900)
+        : 460)
+    : 0;
+  const PHOTO_GAP = photoB64 ? 44 : 0;
+  const PHOTO_BOT = photoB64 ? 24 : 0;
 
   // Metin satırları
   const paragraphs = rawText.split('\n');
