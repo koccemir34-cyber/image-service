@@ -315,7 +315,7 @@ async function buildSvg(rawText, photoB64) {
   <!-- Avatar -->
   <image x="${avaCX - AVA_R}" y="${avaCY - AVA_R}"
          width="${AVA_R * 2}" height="${AVA_R * 2}"
-         href="data:image/png;base64,${LOGO_B64}" clip-path="url(#ava)"/>
+         href="data:image/jpeg;base64,${LOGO_B64}" clip-path="url(#ava)"/>
   <circle cx="${avaCX}" cy="${avaCY}" r="${AVA_R}"
           fill="none" stroke="#E2E8F0" stroke-width="2.5"/>
 
@@ -332,7 +332,7 @@ async function buildSvg(rawText, photoB64) {
 
   <!-- Sağ logo -->
   <image x="${logoX}" y="${logoY}" width="${LOGO_SZ}" height="${LOGO_SZ}"
-         href="data:image/png;base64,${LOGO_B64}"/>
+         href="data:image/jpeg;base64,${LOGO_B64}"/>
 
   <!-- Ayırıcı -->
   <line x1="${TEXT_X}" y1="${sepY}"
