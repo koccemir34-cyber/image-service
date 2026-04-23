@@ -8,7 +8,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const fontBuffer = readFileSync(join(__dirname, 'inter.ttf'));
 const LOGO_B64   = readFileSync(join(__dirname, 'logo_b64.txt'), 'utf8').trim();
 const SECRET     = process.env.IMAGE_SECRET || '';
-const WEBSITE    = process.env.WEBSITE || 'www.selhattinkocinsaat.com';
+const WEBSITE    = 'selhattinkoc.web.app';
 
 const emojiCache = new Map();
 
