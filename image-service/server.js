@@ -22,6 +22,7 @@ app.post('/generate', async (req, res) => {
 
   const { text, photoB64 } = req.body;
   if (!text) return res.status(400).json({ error: 'text required' });
+  if (text.length > 600) return res.status(400).json({ error: 'text too long (max 600 chars)' });
 
   try {
     const svg = await buildSvg(text, photoB64 || null);
@@ -58,7 +59,7 @@ async function fetchEmoji(emoji) {
     .join('-');
   try {
     const res = await fetch(
-      `https://cdn.jsdelivr.net/gh/jdecked/twemoji@latest/assets/72x72/${codepoints}.png`
+      `https://cdn.jsdelivr.net/gh/jdecked/twemoji@15.1.0/assets/72x72/${codepoints}.png`
     );
     if (!res.ok) { emojiCache.set(emoji, null); return null; }
     const b64 = Buffer.from(await res.arrayBuffer()).toString('base64');
@@ -117,25 +118,27 @@ function wrapText(text, max) {
 
 // ── SVG ─────────────────────────────────────────────────────────────────────
 async function buildSvg(rawText, photoB64) {
-  const W        = 1080;
-  const CARD_W   = 960;
-  const CARD_X   = (W - CARD_W) / 2;
-  const PAD      = 60;
-  const AVA_R    = 54;
-  const avaCX    = CARD_X + PAD + AVA_R;
-  const FS       = 46;
-  const LH       = 74;
-  const MAX_CH   = 24;
-  const CHAR_W   = FS * 0.57;
-  const EMOJI_SZ = FS * 1.05;
-  const RX       = 28;
-  const ACC_H    = 10;
+  const W  = 1080;
+  const H  = 1920;
+  const CX = W / 2;
 
-  // Fotoğraf boyutları
-  const PHOTO_H   = photoB64 ? 430 : 0;
-  const PHOTO_GAP = photoB64 ? 36  : 0;
-  const PHOTO_BOT = photoB64 ? 16  : 0;
+  // Typography
+  const FS       = 58;
+  const LH       = 90;
+  const MAX_CH   = 22;
+  const CHAR_W   = FS * 0.54;
+  const EMOJI_SZ = FS * 1.1;
 
+  // Layout anchors
+  const LOGO_R    = 82;
+  const LOGO_CY   = 198;
+  const DIV_Y     = 468;
+  const CONTENT_T = DIV_Y + 44;
+  const CONTENT_B = 1738;
+  const BDIV_Y    = 1752;
+  const MARGIN    = 90;
+
+  // Parse text into wrapped lines
   const paragraphs = rawText.split('\n');
   const lines = [];
   for (let p = 0; p < paragraphs.length; p++) {
@@ -143,7 +146,7 @@ async function buildSvg(rawText, photoB64) {
     if (p < paragraphs.length - 1) lines.push(null);
   }
 
-  // Emoji'leri önceden çek
+  // Prefetch all emoji in parallel
   const allEmoji = new Set();
   for (const l of lines) {
     if (!l) continue;
@@ -151,63 +154,39 @@ async function buildSvg(rawText, photoB64) {
   }
   await Promise.all([...allEmoji].map(fetchEmoji));
 
-  const PROF_H   = AVA_R * 2;
-  const SEP_GAP  = 30;
-  const SEP_H    = 2;
-  const TEXT_GAP = 40;
-  const TEXT_H   = lines.reduce((a, l) => a + (l === null ? LH * 0.6 : LH), 0);
-  const BOT_GAP  = 50;
-  const FOOT_H   = 34;
+  // Vertically center text block in content zone
+  const TEXT_H = lines.reduce((a, l) => a + (l === null ? LH * 0.5 : LH), 0);
+  const ZONE_H = CONTENT_B - CONTENT_T;
+  let curY = CONTENT_T + Math.max(0, (ZONE_H - TEXT_H) / 2) + FS * 0.82;
 
-  const CARD_H = Math.max(
-    700,
-    ACC_H + PAD + PROF_H + SEP_GAP + SEP_H + TEXT_GAP + TEXT_H +
-    PHOTO_GAP + PHOTO_H + PHOTO_BOT + BOT_GAP + FOOT_H + PAD
-  );
-
-  const CARD_Y = 110;
-  const H = Math.max(1920, CARD_Y + CARD_H + 110);
-
-  const avaCY   = CARD_Y + ACC_H + PAD + AVA_R;
-  const nameX   = avaCX + AVA_R + 20;
-  const nameY   = avaCY - 12;
-  const handleY = avaCY + 26;
-  const LOGO_SZ = 60;
-  const logoX   = CARD_X + CARD_W - PAD - LOGO_SZ;
-  const logoY   = CARD_Y + ACC_H + PAD + (AVA_R - LOGO_SZ / 2);
-  const sepY    = CARD_Y + ACC_H + PAD + PROF_H + SEP_GAP;
-  const footY   = CARD_Y + CARD_H - PAD - 4;
-  const footX   = CARD_X + CARD_W - PAD;
-
-  // Fotoğraf pozisyonu (metin bittikten sonra)
-  const textEndY = sepY + SEP_H + TEXT_GAP + TEXT_H;
-  const photoY   = textEndY + PHOTO_GAP;
-  const photoW   = CARD_W - PAD * 2;
-
-  // Metin elementleri
-  let curY = sepY + SEP_H + TEXT_GAP + FS * 0.82;
+  // Build SVG text elements (all centered on CX)
   const els = [];
-
   for (const line of lines) {
-    if (line === null) { curY += LH * 0.6; continue; }
+    if (line === null) { curY += LH * 0.5; continue; }
 
     const segs     = segmentLine(line);
     const hasEmoji = segs.some(s => s.type === 'emoji');
 
     if (!hasEmoji) {
       els.push(
-        `<text x="${CARD_X + PAD}" y="${Math.round(curY)}"
-          font-family="Inter" font-size="${FS}" font-weight="700" fill="#111827"
-          stroke="#111827" stroke-width="0.3" paint-order="stroke fill">${escapeXml(line)}</text>`
+        `<text x="${CX}" y="${Math.round(curY)}"
+          text-anchor="middle" font-family="Inter"
+          font-size="${FS}" font-weight="700" fill="#FFFFFF">${escapeXml(line)}</text>`
       );
     } else {
-      let x = CARD_X + PAD;
+      // Calculate total line width for manual centering
+      let lineW = 0;
+      for (const seg of segs) {
+        if (seg.type === 'text') lineW += seg.value.length * CHAR_W;
+        else lineW += EMOJI_SZ + 6;
+      }
+      let x = CX - lineW / 2;
       for (const seg of segs) {
         if (seg.type === 'text' && seg.value) {
           els.push(
             `<text x="${Math.round(x)}" y="${Math.round(curY)}"
-              font-family="Inter" font-size="${FS}" font-weight="700" fill="#111827"
-              stroke="#111827" stroke-width="0.3" paint-order="stroke fill">${escapeXml(seg.value)}</text>`
+              font-family="Inter" font-size="${FS}" font-weight="700"
+              fill="#FFFFFF">${escapeXml(seg.value)}</text>`
           );
           x += seg.value.length * CHAR_W;
         } else if (seg.type === 'emoji') {
@@ -219,93 +198,143 @@ async function buildSvg(rawText, photoB64) {
                 href="${dataUrl}"/>`
             );
           }
-          x += EMOJI_SZ + 4;
+          x += EMOJI_SZ + 6;
         }
       }
     }
     curY += LH;
   }
 
-  // Fotoğraf elementi
-  const photoEl = photoB64 ? `
-  <clipPath id="photoClip">
-    <rect x="${CARD_X + PAD}" y="${Math.round(photoY)}" width="${photoW}" height="${PHOTO_H}" rx="16" ry="16"/>
-  </clipPath>` : '';
+  const now = new Date();
+  const dateStr = `${now.getDate().toString().padStart(2,'0')}.${(now.getMonth()+1).toString().padStart(2,'0')}.${now.getFullYear()}`;
 
-  const photoImg = photoB64 ? `
-  <image x="${CARD_X + PAD}" y="${Math.round(photoY)}" width="${photoW}" height="${PHOTO_H}"
-         href="data:image/jpeg;base64,${photoB64}"
-         clip-path="url(#photoClip)"
-         preserveAspectRatio="xMidYMid slice"/>` : '';
+  // Background: photo-as-canvas or geometric dark
+  const background = photoB64 ? `
+    <image x="0" y="0" width="${W}" height="${H}"
+           href="data:image/jpeg;base64,${photoB64}"
+           preserveAspectRatio="xMidYMid slice"/>
+    <rect width="${W}" height="${H}" fill="url(#photoOverlay)"/>` : `
+    <rect width="${W}" height="${H}" fill="url(#bgGrad)"/>
+    <rect width="${W}" height="${H}" fill="url(#diagonalPat)" opacity="1"/>
+    <circle cx="1200" cy="160" r="580" fill="url(#glowRed)" opacity="0.09"/>
+    <circle cx="-170" cy="1780" r="480" fill="url(#glowRed)" opacity="0.07"/>`;
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"
      xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
   <defs>
-    <clipPath id="ava">
-      <circle cx="${avaCX}" cy="${avaCY}" r="${AVA_R}"/>
+    <clipPath id="logoClip">
+      <circle cx="${CX}" cy="${LOGO_CY}" r="${LOGO_R}"/>
     </clipPath>
-    ${photoEl}
-    <filter id="shadow" x="-6%" y="-4%" width="124%" height="118%">
-      <feDropShadow dx="0" dy="14" stdDeviation="26" flood-color="#000" flood-opacity="0.35"/>
-    </filter>
-    <linearGradient id="bg" x1="0" y1="0" x2="0.3" y2="1">
-      <stop offset="0%" stop-color="#0D1117"/>
-      <stop offset="100%" stop-color="#161B27"/>
+
+    <!-- Background gradient (no-photo mode) -->
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="0.1" y2="1">
+      <stop offset="0%"   stop-color="#0F1117"/>
+      <stop offset="100%" stop-color="#0B0D13"/>
     </linearGradient>
-    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="#B91C1C"/>
+
+    <!-- Photo overlay: dark top/bottom, lighter middle to show photo -->
+    <linearGradient id="photoOverlay" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#000000" stop-opacity="0.92"/>
+      <stop offset="26%"  stop-color="#000000" stop-opacity="0.55"/>
+      <stop offset="60%"  stop-color="#000000" stop-opacity="0.40"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.88"/>
+    </linearGradient>
+
+    <!-- Red ambient glow -->
+    <radialGradient id="glowRed" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"   stop-color="#DC2626"/>
+      <stop offset="100%" stop-color="#DC2626" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Red gradient (horizontal) -->
+    <linearGradient id="redGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#991B1B"/>
       <stop offset="100%" stop-color="#EF4444"/>
     </linearGradient>
-    <linearGradient id="sep" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="#F3F4F6"/>
-      <stop offset="50%" stop-color="#D1D5DB"/>
-      <stop offset="100%" stop-color="#F3F4F6"/>
+
+    <!-- Divider line: fade in/out -->
+    <linearGradient id="divLine" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#EF4444" stop-opacity="0"/>
+      <stop offset="12%"  stop-color="#EF4444" stop-opacity="0.9"/>
+      <stop offset="88%"  stop-color="#EF4444" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#EF4444" stop-opacity="0"/>
     </linearGradient>
+
+    <!-- Logo outer glow -->
+    <radialGradient id="logoGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"   stop-color="#EF4444" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="#EF4444" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Subtle diagonal line texture -->
+    <pattern id="diagonalPat" width="72" height="72"
+             patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <line x1="0" y1="0" x2="0" y2="72"
+            stroke="#FFFFFF" stroke-width="0.35" stroke-opacity="0.022"/>
+    </pattern>
+
+    <!-- Text drop shadow -->
+    <filter id="tShadow" x="-8%" y="-15%" width="116%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="8"
+                    flood-color="#000000" flood-opacity="0.75"/>
+    </filter>
   </defs>
 
-  <!-- Arka plan -->
-  <rect width="${W}" height="${H}" fill="url(#bg)"/>
+  <!-- ── Background ──────────────────────────────────────────────── -->
+  ${background}
 
-  <!-- Kart -->
-  <rect x="${CARD_X}" y="${CARD_Y}" width="${CARD_W}" height="${CARD_H}"
-        rx="${RX}" ry="${RX}" fill="#FFFFFF" filter="url(#shadow)"/>
+  <!-- ── Top accent bar ─────────────────────────────────────────── -->
+  <rect x="0" y="0" width="${W}" height="6" fill="url(#redGrad)"/>
 
-  <!-- Kırmızı accent (üst) -->
-  <rect x="${CARD_X}" y="${CARD_Y}" width="${CARD_W}" height="${ACC_H + RX}"
-        rx="${RX}" ry="${RX}" fill="url(#accent)"/>
-  <rect x="${CARD_X}" y="${CARD_Y + ACC_H}" width="${CARD_W}" height="${RX}" fill="#FFFFFF"/>
+  <!-- ── Logo section ───────────────────────────────────────────── -->
+  <!-- Outer glow ring -->
+  <circle cx="${CX}" cy="${LOGO_CY}" r="${LOGO_R + 38}" fill="url(#logoGlow)"/>
+  <!-- White logo background -->
+  <circle cx="${CX}" cy="${LOGO_CY}" r="${LOGO_R}" fill="#FFFFFF"/>
+  <!-- Logo image -->
+  <image x="${CX - LOGO_R}" y="${LOGO_CY - LOGO_R}"
+         width="${LOGO_R * 2}" height="${LOGO_R * 2}"
+         href="data:image/png;base64,${LOGO_B64}"
+         clip-path="url(#logoClip)"/>
+  <!-- Logo border -->
+  <circle cx="${CX}" cy="${LOGO_CY}" r="${LOGO_R}"
+          fill="none" stroke="url(#redGrad)" stroke-width="3.5"/>
 
-  <!-- Avatar -->
-  <image x="${avaCX - AVA_R}" y="${avaCY - AVA_R}"
-         width="${AVA_R * 2}" height="${AVA_R * 2}"
-         href="data:image/png;base64,${LOGO_B64}" clip-path="url(#ava)"/>
-  <circle cx="${avaCX}" cy="${avaCY}" r="${AVA_R}"
-          fill="none" stroke="#E5E7EB" stroke-width="2.5"/>
+  <!-- ── Company name ───────────────────────────────────────────── -->
+  <text x="${CX}" y="${LOGO_CY + LOGO_R + 52}"
+        text-anchor="middle" font-family="Inter"
+        font-size="38" font-weight="800" fill="#FFFFFF">SELHATTİN KOÇ</text>
+  <text x="${CX}" y="${LOGO_CY + LOGO_R + 96}"
+        text-anchor="middle" font-family="Inter"
+        font-size="27" font-weight="600" fill="#EF4444">İNŞAAT TAAHHÜT</text>
+  <text x="${CX}" y="${LOGO_CY + LOGO_R + 136}"
+        text-anchor="middle" font-family="Inter"
+        font-size="21" font-weight="400" fill="#9CA3AF">@selhattinkocinsaat</text>
 
-  <!-- İsim ve handle -->
-  <text x="${nameX}" y="${nameY}"
-        font-family="Inter" font-size="25" font-weight="800" fill="#111827">SELHATTİN KOÇ İNŞAAT TAAHHÜT</text>
-  <text x="${nameX}" y="${handleY}"
-        font-family="Inter" font-size="21" fill="#6B7280">@selhattinkocinsaat</text>
+  <!-- ── Top divider ────────────────────────────────────────────── -->
+  <line x1="${MARGIN}" y1="${DIV_Y}" x2="${W - MARGIN}" y2="${DIV_Y}"
+        stroke="url(#divLine)" stroke-width="1.5"/>
 
-  <!-- Sağ logo -->
-  <image x="${logoX}" y="${logoY}" width="${LOGO_SZ}" height="${LOGO_SZ}"
-         href="data:image/png;base64,${LOGO_B64}"/>
+  <!-- ── Content text (vertically centered in zone) ────────────── -->
+  <g filter="url(#tShadow)">
+    ${els.join('\n    ')}
+  </g>
 
-  <!-- Ayırıcı -->
-  <line x1="${CARD_X + PAD}" y1="${sepY}" x2="${CARD_X + CARD_W - PAD}" y2="${sepY}"
-        stroke="url(#sep)" stroke-width="${SEP_H}"/>
+  <!-- ── Bottom divider ────────────────────────────────────────── -->
+  <line x1="${MARGIN}" y1="${BDIV_Y}" x2="${W - MARGIN}" y2="${BDIV_Y}"
+        stroke="url(#divLine)" stroke-width="1.5"/>
 
-  <!-- Metin -->
-  ${els.join('\n  ')}
+  <!-- ── Footer ────────────────────────────────────────────────── -->
+  <text x="${CX}" y="${BDIV_Y + 64}"
+        text-anchor="middle" font-family="Inter"
+        font-size="21" font-weight="600" fill="#D1D5DB">SELHATTİN KOÇ İNŞAAT TAAHHÜT</text>
+  <text x="${CX}" y="${BDIV_Y + 102}"
+        text-anchor="middle" font-family="Inter"
+        font-size="19" font-weight="400" fill="#6B7280">${dateStr}</text>
 
-  <!-- Kullanıcı fotoğrafı (varsa) -->
-  ${photoImg}
-
-  <!-- Footer -->
-  <text x="${footX}" y="${footY}"
-        font-family="Inter" font-size="19" fill="#9CA3AF" text-anchor="end">SELHATTİN KOÇ İNŞAAT TAAHHÜT</text>
+  <!-- Bottom accent bar -->
+  <rect x="0" y="${H - 6}" width="${W}" height="6" fill="url(#redGrad)"/>
 </svg>`;
 }
 
