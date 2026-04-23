@@ -121,11 +121,11 @@ async function buildSvg(rawText) {
   const CARD_W = 960;
   const CARD_X = (W - CARD_W) / 2;
   const PAD    = 60;
-  const AVA_R  = 54;
+  const AVA_R  = 58;
   const avaCX  = CARD_X + PAD + AVA_R;
-  const FS     = 48;
-  const LH     = 78;
-  const MAX_CH = 23;
+  const FS     = 54;
+  const LH     = 88;
+  const MAX_CH = 22;
   const CHAR_W = FS * 0.57;
   const EMOJI_SZ = FS * 1.05;
 
@@ -145,11 +145,11 @@ async function buildSvg(rawText) {
   await Promise.all([...allEmoji].map(fetchEmoji));
 
   const PROF_H  = AVA_R * 2;
-  const SEP_GAP = 32;
+  const SEP_GAP = 36;
   const SEP_H   = 2;
-  const TEXT_GAP = 44;
+  const TEXT_GAP = 50;
   const TEXT_H  = lines.reduce((a, l) => a + (l === null ? LH * 0.6 : LH), 0);
-  const BOT_GAP = 56;
+  const BOT_GAP = 64;
   const FOOT_H  = 36;
   const ACC_H   = 10; // kırmızı accent çubuğu
 
@@ -183,8 +183,7 @@ async function buildSvg(rawText) {
     if (!hasEmoji) {
       els.push(
         `<text x="${CARD_X + PAD}" y="${Math.round(curY)}"
-          font-family="Inter" font-size="${FS}" font-weight="700" fill="#111827"
-          stroke="#111827" stroke-width="0.35" paint-order="stroke fill">${escapeXml(line)}</text>`
+          font-family="Inter" font-size="${FS}" font-weight="700" fill="#0F172A">${escapeXml(line)}</text>`
       );
     } else {
       let x = CARD_X + PAD;
@@ -192,8 +191,8 @@ async function buildSvg(rawText) {
         if (seg.type === 'text' && seg.value) {
           els.push(
             `<text x="${Math.round(x)}" y="${Math.round(curY)}"
-              font-family="Inter" font-size="${FS}" font-weight="700" fill="#111827"
-              stroke="#111827" stroke-width="0.35" paint-order="stroke fill">${escapeXml(seg.value)}</text>`
+              font-family="Inter" font-size="${FS}" font-weight="700"
+              fill="#0F172A">${escapeXml(seg.value)}</text>`
           );
           x += seg.value.length * CHAR_W;
         } else if (seg.type === 'emoji') {
@@ -223,8 +222,8 @@ async function buildSvg(rawText) {
     <clipPath id="ava">
       <circle cx="${avaCX}" cy="${avaCY}" r="${AVA_R}"/>
     </clipPath>
-    <filter id="shadow" x="-6%" y="-4%" width="124%" height="118%">
-      <feDropShadow dx="0" dy="14" stdDeviation="26" flood-color="#000" flood-opacity="0.35"/>
+    <filter id="shadow" x="-8%" y="-5%" width="128%" height="122%">
+      <feDropShadow dx="0" dy="8" stdDeviation="18" flood-color="#000" flood-opacity="0.28"/>
     </filter>
     <linearGradient id="bg" x1="0" y1="0" x2="0.4" y2="1">
       <stop offset="0%" stop-color="#0D1117"/>
@@ -262,9 +261,9 @@ async function buildSvg(rawText) {
 
   <!-- İsim ve handle -->
   <text x="${nameX}" y="${nameY}"
-        font-family="Inter" font-size="25" font-weight="800" fill="#111827">SELHATTİN KOÇ İNŞAAT TAAHHÜT</text>
+        font-family="Inter" font-size="27" font-weight="800" fill="#0F172A">SELHATTİN KOÇ İNŞAAT TAAHHÜT</text>
   <text x="${nameX}" y="${handleY}"
-        font-family="Inter" font-size="22" fill="#6B7280">@selhattinkocinsaat</text>
+        font-family="Inter" font-size="23" fill="#6B7280">@selhattinkocinsaat</text>
 
   <!-- Sağ logo -->
   <image x="${logoX}" y="${logoY}" width="${LOGO_SZ}" height="${LOGO_SZ}"
@@ -279,7 +278,7 @@ async function buildSvg(rawText) {
 
   <!-- Footer -->
   <text x="${footX}" y="${footY}"
-        font-family="Inter" font-size="20" fill="#9CA3AF" text-anchor="end">SELHATTİN KOÇ İNŞAAT TAAHHÜT</text>
+        font-family="Inter" font-size="21" fill="#9CA3AF" text-anchor="end">SELHATTİN KOÇ İNŞAAT TAAHHÜT</text>
 </svg>`;
 }
 
