@@ -50,10 +50,19 @@ app.listen(process.env.PORT || 3000, () =>
 );
 
 // ── Emoji ────────────────────────────────────────────────────────────────────
-const EMOJI_RE = /\p{Emoji_Presentation}|\p{Extended_Pictographic}/gu;
+// Tek codepoint yerine grapheme cluster kullanıyoruz:
+// ZWJ dizileri (👨‍💻), bayrak çiftleri (🇹🇷), variation selector (❤️)
+// hepsini doğru şekilde tek birim olarak gruplayacak.
+const EMOJI_RE = /\p{Emoji_Presentation}|\p{Extended_Pictographic}/u;
+const graphemeSegmenter = new Intl.Segmenter('und', { granularity: 'grapheme' });
+
+function isEmojiCluster(g) {
+  return EMOJI_RE.test(g);
+}
 
 async function fetchEmoji(emoji) {
   if (emojiCache.has(emoji)) return emojiCache.get(emoji);
+  // FE0F (variation selector) çıkar, ZWJ (200d) bırak
   const codepoints = [...emoji]
     .map(c => c.codePointAt(0).toString(16))
     .filter(cp => cp !== 'fe0f')
@@ -74,23 +83,24 @@ async function fetchEmoji(emoji) {
 
 function segmentLine(text) {
   const segments = [];
-  const re = new RegExp(EMOJI_RE.source, 'gu');
-  let lastIndex = 0, m;
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > lastIndex)
-      segments.push({ type: 'text', value: text.slice(lastIndex, m.index) });
-    segments.push({ type: 'emoji', value: m[0] });
-    lastIndex = re.lastIndex;
+  let textChunk = '';
+  for (const { segment } of graphemeSegmenter.segment(text)) {
+    if (isEmojiCluster(segment)) {
+      if (textChunk) { segments.push({ type: 'text', value: textChunk }); textChunk = ''; }
+      segments.push({ type: 'emoji', value: segment });
+    } else {
+      textChunk += segment;
+    }
   }
-  if (lastIndex < text.length)
-    segments.push({ type: 'text', value: text.slice(lastIndex) });
+  if (textChunk) segments.push({ type: 'text', value: textChunk });
   return segments;
 }
 
 function displayLen(s) {
-  const re = new RegExp(EMOJI_RE.source, 'gu');
-  let len = s.length, m;
-  while ((m = re.exec(s)) !== null) len += 1;
+  let len = 0;
+  for (const { segment } of graphemeSegmenter.segment(s)) {
+    len += isEmojiCluster(segment) ? 2 : segment.length;
+  }
   return len;
 }
 
@@ -105,9 +115,9 @@ function wrapText(text, max) {
     if (cur) lines.push(cur);
     if (displayLen(w) > max) {
       let chunk = '';
-      for (const ch of [...w]) {
-        if (displayLen(chunk + ch) > max) { lines.push(chunk); chunk = ch; }
-        else chunk += ch;
+      for (const { segment } of graphemeSegmenter.segment(w)) {
+        if (displayLen(chunk + segment) > max) { lines.push(chunk); chunk = segment; }
+        else chunk += segment;
       }
       if (chunk) cur = chunk;
     } else { cur = w; }
