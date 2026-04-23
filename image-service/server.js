@@ -6,13 +6,14 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fontBuffer = readFileSync(join(__dirname, 'inter.ttf'));
-const LOGO_B64 = readFileSync(join(__dirname, 'logo_b64.txt'), 'utf8').trim();
-const SECRET = process.env.IMAGE_SECRET || '';
+const LOGO_B64   = readFileSync(join(__dirname, 'logo_b64.txt'), 'utf8').trim();
+const SECRET     = process.env.IMAGE_SECRET || '';
+const WEBSITE    = process.env.WEBSITE || 'www.selhattinkocinsaat.com';
 
 const emojiCache = new Map();
 
 const app = express();
-app.use(express.json({ limit: '20kb' }));
+app.use(express.json({ limit: '15mb' }));
 
 app.get('/', (_, res) => res.send('Image service active ✅'));
 
@@ -20,11 +21,12 @@ app.post('/generate', async (req, res) => {
   if (SECRET && req.headers['x-secret'] !== SECRET)
     return res.status(401).json({ error: 'unauthorized' });
 
-  const { text } = req.body;
+  const { text, photoB64 } = req.body;
   if (!text) return res.status(400).json({ error: 'text required' });
+  if (text.length > 600) return res.status(400).json({ error: 'text too long' });
 
   try {
-    const svg = await buildSvg(text);
+    const svg = await buildSvg(text, photoB64 || null);
     const resvg = new Resvg(svg, {
       font: {
         loadSystemFonts: false,
@@ -47,7 +49,7 @@ app.listen(process.env.PORT || 3000, () =>
   console.log('Ready on port', process.env.PORT || 3000)
 );
 
-// ── Emoji: Twemoji CDN'den PNG çek, base64 olarak göm ──────────────────────
+// ── Emoji ────────────────────────────────────────────────────────────────────
 const EMOJI_RE = /\p{Emoji_Presentation}|\p{Extended_Pictographic}/gu;
 
 async function fetchEmoji(emoji) {
@@ -58,13 +60,12 @@ async function fetchEmoji(emoji) {
     .join('-');
   try {
     const res = await fetch(
-      `https://cdn.jsdelivr.net/gh/jdecked/twemoji@latest/assets/72x72/${codepoints}.png`
+      `https://cdn.jsdelivr.net/gh/jdecked/twemoji@15.1.0/assets/72x72/${codepoints}.png`
     );
     if (!res.ok) { emojiCache.set(emoji, null); return null; }
     const b64 = Buffer.from(await res.arrayBuffer()).toString('base64');
-    const dataUrl = `data:image/png;base64,${b64}`;
-    emojiCache.set(emoji, dataUrl);
-    return dataUrl;
+    emojiCache.set(emoji, `data:image/png;base64,${b64}`);
+    return emojiCache.get(emoji);
   } catch {
     emojiCache.set(emoji, null);
     return null;
@@ -89,7 +90,7 @@ function segmentLine(text) {
 function displayLen(s) {
   const re = new RegExp(EMOJI_RE.source, 'gu');
   let len = s.length, m;
-  while ((m = re.exec(s)) !== null) len += 1; // emoji = 2 birim genişlik
+  while ((m = re.exec(s)) !== null) len += 1;
   return len;
 }
 
@@ -115,20 +116,31 @@ function wrapText(text, max) {
   return lines.length ? lines : [''];
 }
 
-// ── SVG oluştur ─────────────────────────────────────────────────────────────
-async function buildSvg(rawText) {
+// ── SVG ─────────────────────────────────────────────────────────────────────
+async function buildSvg(rawText, photoB64) {
   const W      = 1080;
-  const CARD_W = 960;
-  const CARD_X = (W - CARD_W) / 2;
-  const PAD    = 60;
-  const AVA_R  = 58;
-  const avaCX  = CARD_X + PAD + AVA_R;
+  const CARD_W = 1040;
+  const CARD_X = (W - CARD_W) / 2;   // 20px kenar boşluğu
+  const RX     = 22;
+  const ACC_W  = 10;                  // sol kırmızı accent bar genişliği
+  const PAD    = 58;                  // iç padding (accent bar sonrası)
+  const TEXT_X = CARD_X + ACC_W + PAD;
+  const TEXT_W = CARD_W - ACC_W - PAD * 2;
+
+  const AVA_R  = 62;
+  const avaCX  = TEXT_X + AVA_R;
   const FS     = 54;
   const LH     = 88;
-  const MAX_CH = 22;
+  const MAX_CH = 23;
   const CHAR_W = FS * 0.57;
   const EMOJI_SZ = FS * 1.05;
 
+  // Fotoğraf boyutları
+  const PHOTO_H   = photoB64 ? 460 : 0;
+  const PHOTO_GAP = photoB64 ? 44  : 0;
+  const PHOTO_BOT = photoB64 ? 24  : 0;
+
+  // Metin satırları
   const paragraphs = rawText.split('\n');
   const lines = [];
   for (let p = 0; p < paragraphs.length; p++) {
@@ -136,7 +148,6 @@ async function buildSvg(rawText) {
     if (p < paragraphs.length - 1) lines.push(null);
   }
 
-  // Tüm emoji'leri önceden çek
   const allEmoji = new Set();
   for (const l of lines) {
     if (!l) continue;
@@ -144,49 +155,55 @@ async function buildSvg(rawText) {
   }
   await Promise.all([...allEmoji].map(fetchEmoji));
 
-  const PROF_H  = AVA_R * 2;
-  const SEP_GAP = 36;
-  const SEP_H   = 2;
-  const TEXT_GAP = 50;
-  const TEXT_H  = lines.reduce((a, l) => a + (l === null ? LH * 0.6 : LH), 0);
-  const BOT_GAP = 64;
-  const FOOT_H  = 36;
-  const ACC_H   = 10; // kırmızı accent çubuğu
+  // Boyutlar
+  const PROF_H    = AVA_R * 2;
+  const SEP_GAP   = 36;
+  const SEP_H     = 2;
+  const TEXT_GAP  = 50;
+  const TEXT_H    = lines.reduce((a, l) => a + (l === null ? LH * 0.6 : LH), 0);
+  const FOOT_AREA = 90;   // footer bölge yüksekliği (gri arka plan)
+  const FOOT_PAD  = 28;
 
   const CARD_H = Math.max(
-    700,
-    ACC_H + PAD + PROF_H + SEP_GAP + SEP_H + TEXT_GAP + TEXT_H + BOT_GAP + FOOT_H + PAD
+    800,
+    PROF_H + SEP_GAP + SEP_H + TEXT_GAP +
+    TEXT_H + PHOTO_GAP + PHOTO_H + PHOTO_BOT +
+    PAD * 2 + FOOT_AREA
   );
 
-  const CARD_Y = 110;
-  const H = Math.max(1920, CARD_Y + CARD_H + 110);
+  const CARD_Y = 90;
+  const H = Math.max(1920, CARD_Y + CARD_H + 90);
 
-  const avaCY  = CARD_Y + ACC_H + PAD + AVA_R;
-  const nameX  = avaCX + AVA_R + 20;
-  const nameY  = avaCY - 12;
-  const handleY = avaCY + 26;
-  const LOGO_SZ = 62;
-  const logoX  = CARD_X + CARD_W - PAD - LOGO_SZ;
-  const logoY  = CARD_Y + ACC_H + PAD + (AVA_R - LOGO_SZ / 2);
-  const sepY   = CARD_Y + ACC_H + PAD + PROF_H + SEP_GAP;
+  const avaCY   = CARD_Y + PAD + AVA_R;
+  const nameX   = avaCX + AVA_R + 22;
+  const nameY   = avaCY - 14;
+  const subY    = avaCY + 20;
+  const handleY = avaCY + 52;
+  const LOGO_SZ = 66;
+  const logoX   = CARD_X + CARD_W - PAD - LOGO_SZ;
+  const logoY   = CARD_Y + PAD + (AVA_R - LOGO_SZ / 2);
+  const sepY    = CARD_Y + PAD + PROF_H + SEP_GAP;
 
+  const footAreaY = CARD_Y + CARD_H - FOOT_AREA;
+
+  // Metin elementleri
   let curY = sepY + SEP_H + TEXT_GAP + FS * 0.82;
-
-  // Metin + emoji elementleri
   const els = [];
+
   for (const line of lines) {
     if (line === null) { curY += LH * 0.6; continue; }
 
-    const segs = segmentLine(line);
+    const segs     = segmentLine(line);
     const hasEmoji = segs.some(s => s.type === 'emoji');
 
     if (!hasEmoji) {
       els.push(
-        `<text x="${CARD_X + PAD}" y="${Math.round(curY)}"
-          font-family="Inter" font-size="${FS}" font-weight="700" fill="#0F172A">${escapeXml(line)}</text>`
+        `<text x="${TEXT_X}" y="${Math.round(curY)}"
+          font-family="Inter" font-size="${FS}" font-weight="700"
+          fill="#0F172A">${escapeXml(line)}</text>`
       );
     } else {
-      let x = CARD_X + PAD;
+      let x = TEXT_X;
       for (const seg of segs) {
         if (seg.type === 'text' && seg.value) {
           els.push(
@@ -204,81 +221,137 @@ async function buildSvg(rawText) {
                 href="${dataUrl}"/>`
             );
           }
-          x += EMOJI_SZ + 3;
+          x += EMOJI_SZ + 4;
         }
       }
     }
     curY += LH;
   }
 
-  const footY = CARD_Y + CARD_H - PAD - 4;
-  const footX = CARD_X + CARD_W - PAD;
-  const RX    = 28;
+  // Fotoğraf
+  const textEndY = sepY + SEP_H + TEXT_GAP + TEXT_H;
+  const photoY   = textEndY + PHOTO_GAP;
+
+  const photoClip = photoB64 ? `
+    <clipPath id="photoClip">
+      <rect x="${TEXT_X}" y="${Math.round(photoY)}"
+            width="${TEXT_W}" height="${PHOTO_H}" rx="14" ry="14"/>
+    </clipPath>` : '';
+
+  const photoImg = photoB64 ? `
+  <image x="${TEXT_X}" y="${Math.round(photoY)}"
+         width="${TEXT_W}" height="${PHOTO_H}"
+         href="data:image/jpeg;base64,${photoB64}"
+         clip-path="url(#photoClip)"
+         preserveAspectRatio="xMidYMid slice"/>` : '';
+
+  const now = new Date();
+  const dateStr = `${now.getDate().toString().padStart(2,'0')}.${(now.getMonth()+1).toString().padStart(2,'0')}.${now.getFullYear()}`;
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"
      xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
   <defs>
+    <clipPath id="cardClip">
+      <rect x="${CARD_X}" y="${CARD_Y}" width="${CARD_W}" height="${CARD_H}"
+            rx="${RX}" ry="${RX}"/>
+    </clipPath>
     <clipPath id="ava">
       <circle cx="${avaCX}" cy="${avaCY}" r="${AVA_R}"/>
     </clipPath>
-    <filter id="shadow" x="-8%" y="-5%" width="128%" height="122%">
-      <feDropShadow dx="0" dy="8" stdDeviation="18" flood-color="#000" flood-opacity="0.28"/>
-    </filter>
-    <linearGradient id="bg" x1="0" y1="0" x2="0.4" y2="1">
-      <stop offset="0%" stop-color="#0D1117"/>
-      <stop offset="100%" stop-color="#161B27"/>
+    ${photoClip}
+
+    <!-- Arka plan -->
+    <linearGradient id="bg" x1="0" y1="0" x2="0.2" y2="1">
+      <stop offset="0%"   stop-color="#0D1117"/>
+      <stop offset="100%" stop-color="#131820"/>
     </linearGradient>
-    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="#B91C1C"/>
+
+    <!-- Sol accent bar (dikey) -->
+    <linearGradient id="accentV" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#EF4444"/>
+      <stop offset="100%" stop-color="#991B1B"/>
+    </linearGradient>
+
+    <!-- Üst accent şerit (yatay) -->
+    <linearGradient id="accentH" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#B91C1C"/>
       <stop offset="100%" stop-color="#EF4444"/>
     </linearGradient>
+
+    <!-- Ayırıcı çizgi -->
     <linearGradient id="sep" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="#E5E7EB"/>
-      <stop offset="50%" stop-color="#D1D5DB"/>
-      <stop offset="100%" stop-color="#E5E7EB"/>
+      <stop offset="0%"   stop-color="#E2E8F0"/>
+      <stop offset="50%"  stop-color="#CBD5E1"/>
+      <stop offset="100%" stop-color="#E2E8F0"/>
     </linearGradient>
+
+    <!-- Kart gölgesi -->
+    <filter id="shadow" x="-5%" y="-3%" width="120%" height="116%">
+      <feDropShadow dx="0" dy="10" stdDeviation="22"
+                    flood-color="#000000" flood-opacity="0.40"/>
+    </filter>
   </defs>
 
   <!-- Arka plan -->
   <rect width="${W}" height="${H}" fill="url(#bg)"/>
 
-  <!-- Kart gölge + gövde -->
+  <!-- Kart zemini + gölge -->
   <rect x="${CARD_X}" y="${CARD_Y}" width="${CARD_W}" height="${CARD_H}"
         rx="${RX}" ry="${RX}" fill="#FFFFFF" filter="url(#shadow)"/>
 
-  <!-- Kırmızı accent şerit (üst) -->
-  <rect x="${CARD_X}" y="${CARD_Y}" width="${CARD_W}" height="${ACC_H + RX}"
-        rx="${RX}" ry="${RX}" fill="url(#accent)"/>
-  <rect x="${CARD_X}" y="${CARD_Y + ACC_H}" width="${CARD_W}" height="${RX}" fill="#FFFFFF"/>
+  <!-- Footer gri arka plan (card içinde, alta yapışık) -->
+  <rect x="${CARD_X}" y="${footAreaY}" width="${CARD_W}" height="${FOOT_AREA}"
+        fill="#F1F5F9" clip-path="url(#cardClip)"/>
+
+  <!-- Sol kırmızı accent bar -->
+  <rect x="${CARD_X}" y="${CARD_Y}" width="${ACC_W}" height="${CARD_H}"
+        fill="url(#accentV)" clip-path="url(#cardClip)"/>
+
+  <!-- Üst kırmızı accent şerit -->
+  <rect x="${CARD_X}" y="${CARD_Y}" width="${CARD_W}" height="8"
+        fill="url(#accentH)" clip-path="url(#cardClip)"/>
 
   <!-- Avatar -->
   <image x="${avaCX - AVA_R}" y="${avaCY - AVA_R}"
          width="${AVA_R * 2}" height="${AVA_R * 2}"
          href="data:image/png;base64,${LOGO_B64}" clip-path="url(#ava)"/>
   <circle cx="${avaCX}" cy="${avaCY}" r="${AVA_R}"
-          fill="none" stroke="#E5E7EB" stroke-width="2.5"/>
+          fill="none" stroke="#E2E8F0" stroke-width="2.5"/>
 
-  <!-- İsim ve handle -->
+  <!-- Şirket adı (hiyerarşi: büyük isim → kırmızı sektör → gri handle) -->
   <text x="${nameX}" y="${nameY}"
-        font-family="Inter" font-size="27" font-weight="800" fill="#0F172A">SELHATTİN KOÇ İNŞAAT TAAHHÜT</text>
+        font-family="Inter" font-size="28" font-weight="900"
+        fill="#0F172A">SELHATTİN KOÇ</text>
+  <text x="${nameX}" y="${subY}"
+        font-family="Inter" font-size="22" font-weight="700"
+        fill="#DC2626">İNŞAAT TAAHHÜT</text>
   <text x="${nameX}" y="${handleY}"
-        font-family="Inter" font-size="23" fill="#6B7280">@selhattinkocinsaat</text>
+        font-family="Inter" font-size="19" font-weight="400"
+        fill="#94A3B8">@selhattinkocinsaat</text>
 
   <!-- Sağ logo -->
   <image x="${logoX}" y="${logoY}" width="${LOGO_SZ}" height="${LOGO_SZ}"
          href="data:image/png;base64,${LOGO_B64}"/>
 
-  <!-- Ayırıcı çizgi -->
-  <line x1="${CARD_X + PAD}" y1="${sepY}" x2="${CARD_X + CARD_W - PAD}" y2="${sepY}"
+  <!-- Ayırıcı -->
+  <line x1="${TEXT_X}" y1="${sepY}"
+        x2="${CARD_X + CARD_W - PAD}" y2="${sepY}"
         stroke="url(#sep)" stroke-width="${SEP_H}"/>
 
-  <!-- İçerik -->
+  <!-- İçerik metni -->
   ${els.join('\n  ')}
 
-  <!-- Footer -->
-  <text x="${footX}" y="${footY}"
-        font-family="Inter" font-size="21" fill="#9CA3AF" text-anchor="end">SELHATTİN KOÇ İNŞAAT TAAHHÜT</text>
+  <!-- Kullanıcı fotoğrafı (varsa) -->
+  ${photoImg}
+
+  <!-- Footer içeriği -->
+  <text x="${TEXT_X}" y="${footAreaY + FOOT_PAD + 22}"
+        font-family="Inter" font-size="22" font-weight="600"
+        fill="#1E293B">${escapeXml(WEBSITE)}</text>
+  <text x="${CARD_X + CARD_W - PAD}" y="${footAreaY + FOOT_PAD + 22}"
+        font-family="Inter" font-size="18" font-weight="400"
+        fill="#94A3B8" text-anchor="end">${dateStr}</text>
 </svg>`;
 }
 
