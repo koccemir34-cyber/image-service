@@ -54,12 +54,11 @@ async function handleWebhook(update, env) {
       if (text === "/liste")           return handleList(chatId, env);
       if (text === "/basarili")        return handleBasarili(chatId, env);
       if (text.startsWith("/sil"))     return handleDelete(text, chatId, env);
-      if (text === "/story") {
+      if (text === "/story" || text.startsWith("/story")) {
         state = { step: STATES.STORY_TEXT, chatId };
         await saveState(chatId, state, env);
         return send(chatId, "📝 *Story Oluştur*\n\nGörsel üzerine yazılacak metni girin:", env);
       }
-      if (text.startsWith("/story "))  return handleStoryInline(text, chatId, state, env, photos);
 
       if (text === "/tekhatirlat") {
         state = { step: STATES.ONCE_DATE, chatId };
@@ -107,7 +106,7 @@ function startMessage(name) {
 /tekhatirlat - Tek seferlik hatırlatma oluştur
 /herhatirlat - Her ay tekrar eden hatırlatma oluştur
 /liste - Tüm hatırlatmalarını listele
-/story - Instagram hikaye görseli oluştur
+/story - Instagram hikaye görseli oluştur (adım adım)
   `.trim();
 }
 
@@ -119,13 +118,11 @@ function helpMessage() {
 📌 */sil <ID>* — Hatırlatma sil
 📌 */basarili* — Saat başı hatırlatmayı durdur
 
-📌 */story* Kullanımı:
-\`/story Yazınız burada\`
-
-Örnek:
-\`/story Bugün harika bir iş çıkardık!\`
-
-Çok satırlı yazı için Shift+Enter ile satır atlayabilirsiniz.
+📌 */story* — Instagram hikaye görseli oluştur
+1\. `/story` yaz
+2\. Metni gir
+3\. Fotoğraf gönder veya *Hayır* yaz
+4\. Görsel hazır ✅
   `.trim();
 }
 
@@ -209,13 +206,6 @@ async function handleBasarili(chatId, env) {
 
 // ── Story ─────────────────────────────────────────────────────────────────────
 
-// /story yazı şeklinde tek adımda (eski yol, hâlâ destekleniyor)
-async function handleStoryInline(text, chatId, state, env, photos) {
-  const storyText = text.replace(/^\/story\s*/i, '').trim();
-  if (!storyText) return send(chatId, "❌ Metin boş. `/story Yazınız` şeklinde deneyin.", env);
-  await generateAndSendStory(storyText, chatId, env, photos);
-}
-
 // Adım 1: metni al, fotoğraf adımına geç
 async function handleStoryText(text, chatId, state, env) {
   if (!text || text.length < 2)
@@ -228,11 +218,11 @@ async function handleStoryText(text, chatId, state, env) {
 
 // Adım 2: fotoğraf al (ya da geç) ve üret
 async function handleStoryPhotoStep(text, chatId, state, env, photos) {
-  await resetState(chatId, env);
   const hasPhoto = photos && photos.length > 0;
-  const skip     = text.trim().toLowerCase() === 'hayır';
+  const skip     = ['hayır', 'hayir', 'h', 'geç', 'gec', 'atla', 'yok'].includes(text.trim().toLowerCase());
   if (!hasPhoto && !skip)
     return send(chatId, "📸 Fotoğraf gönderin veya *Hayır* yazın.", env);
+  await resetState(chatId, env);
   await generateAndSendStory(state.storyText, chatId, env, hasPhoto ? photos : null);
 }
 
