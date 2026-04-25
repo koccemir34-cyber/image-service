@@ -10,9 +10,14 @@ const STATES = {
   RECURRING_TIME: 'recurring_time',
   RECURRING_MESSAGE: 'recurring_message',
   REMINDER_HOURLY: 'reminder_hourly',
-  DELETE_CONFIRM: 'delete_confirm',
   STORY_TEXT: 'story_text',
-  STORY_PHOTO: 'story_photo'
+  STORY_PHOTO: 'story_photo',
+  OS_KONUM:  'os_konum',
+  OS_BASLIK: 'os_baslik',
+  OS_SATIR1: 'os_satir1',
+  OS_SATIR2: 'os_satir2',
+  OS_ONCE:   'os_once',
+  OS_SONRA:  'os_sonra',
 };
 
 export default {
@@ -54,6 +59,14 @@ async function handleWebhook(update, env) {
       if (text === "/liste")           return handleList(chatId, env);
       if (text === "/basarili")        return handleBasarili(chatId, env);
       if (text.startsWith("/sil"))     return handleDelete(text, chatId, env);
+      if (text === "/uyandir")             return handleUyandir(chatId, env);
+      if (text === "/brifing")             return handleBrifingAktif(chatId, env);
+      if (text === "/brifingkapat")        return handleBrifingKapat(chatId, env);
+      if (text === "/oncesonra") {
+        state = { step: STATES.OS_KONUM, chatId };
+        await saveState(chatId, state, env);
+        return send(chatId, "🏗️ *Önce/Sonra Görseli*\n\n📍 Konum girin (örn: `Sivas / Divriği`):", env);
+      }
       if (text === "/story" || text.startsWith("/story")) {
         state = { step: STATES.STORY_TEXT, chatId };
         await saveState(chatId, state, env);
@@ -83,9 +96,14 @@ async function handleWebhook(update, env) {
       case STATES.RECURRING_TIME:    return handleRecurringTime(text, chatId, state, env);
       case STATES.RECURRING_MESSAGE: return handleRecurringMessage(text, chatId, state, env);
       case STATES.REMINDER_HOURLY:   return handleReminderHourly(text, chatId, state, env);
-      case STATES.DELETE_CONFIRM:    return resetState(chatId, env).then(() => send(chatId, "🔄 İşlem iptal edildi.", env));
       case STATES.STORY_TEXT:        return handleStoryText(text, chatId, state, env);
       case STATES.STORY_PHOTO:       return handleStoryPhotoStep(text, chatId, state, env, photos);
+      case STATES.OS_KONUM:          return handleOsKonum(text, chatId, state, env);
+      case STATES.OS_BASLIK:         return handleOsBaslik(text, chatId, state, env);
+      case STATES.OS_SATIR1:         return handleOsSatir1(text, chatId, state, env);
+      case STATES.OS_SATIR2:         return handleOsSatir2(text, chatId, state, env);
+      case STATES.OS_ONCE:           return handleOsOnce(text, chatId, state, env, photos);
+      case STATES.OS_SONRA:          return handleOsSonra(text, chatId, state, env, photos);
     }
 
     return send(chatId, "⚠️ Beklenmeyen durum. `/start` ile yeniden başlayın.", env);
@@ -106,7 +124,11 @@ function startMessage(name) {
 /tekhatirlat - Tek seferlik hatırlatma oluştur
 /herhatirlat - Her ay tekrar eden hatırlatma oluştur
 /liste - Tüm hatırlatmalarını listele
+/brifing - Günlük sabah brifingi aç
+/brifingkapat - Günlük sabah brifingi kapat
+/uyandir - Görsel servisini uyandır
 /story - Instagram hikaye görseli oluştur (adım adım)
+/oncesonra - Önce/Sonra görseli oluştur
   `.trim();
 }
 
@@ -118,11 +140,24 @@ function helpMessage() {
 📌 */sil <ID>* — Hatırlatma sil
 📌 */basarili* — Saat başı hatırlatmayı durdur
 
+📌 */brifing* — Günlük sabah brifingi aç (her gün 08:00)
+📌 */brifingkapat* — Günlük sabah brifingi kapat
+
+📌 */uyandir* — Görsel servisini uyandır (ilk kullanımdan önce)
+
 📌 */story* — Instagram hikaye görseli oluştur
 1\. `/story` yaz
 2\. Metni gir
 3\. Fotoğraf gönder veya *Hayır* yaz
 4\. Görsel hazır ✅
+
+📌 */oncesonra* — Önce/Sonra görseli oluştur
+1\. `/oncesonra` yaz
+2\. Konum gir (örn: Sivas / Divriği)
+3\. Başlık gir (örn: DÖNÜŞTÜRÜYORUZ\.)
+4\. Alt satır 1 ve 2'yi gir
+5\. ÖNCE fotoğrafı gönder
+6\. SONRA fotoğrafı gönder → görsel hazır ✅
   `.trim();
 }
 
@@ -204,6 +239,112 @@ async function handleBasarili(chatId, env) {
     : send(chatId, "⚠️ Şu an onay bekleyen aktif hatırlatma yok.", env);
 }
 
+// ── Brifing ───────────────────────────────────────────────────────────────────
+const TR_MONTHS = ['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'];
+const TR_DAYS   = ['Pazar','Pazartesi','Salı','Çarşamba','Perşembe','Cuma','Cumartesi'];
+
+async function handleBrifingAktif(chatId, env) {
+  await env.REMINDERS.put(`brifing:${chatId}`, JSON.stringify({ chatId }));
+  const msg = await buildBrifingMessage(chatId, env);
+  return send(chatId, `✅ *Günlük brifing aktif!* Her sabah 08:00'de gelecek.\n\n${msg}`, env);
+}
+
+async function handleBrifingKapat(chatId, env) {
+  await env.REMINDERS.delete(`brifing:${chatId}`);
+  return send(chatId, "🔕 Günlük brifing kapatıldı.", env);
+}
+
+async function buildBrifingMessage(chatId, env) {
+  const now   = new Date();
+  const nowTR = new Date(now.getTime() + 3 * 60 * 60 * 1000);
+  const day   = nowTR.getUTCDate();
+  const month = nowTR.getUTCMonth();
+  const year  = nowTR.getUTCFullYear();
+  const dow   = nowTR.getUTCDay();
+  const nowMs = now.getTime();
+  const weekMs = 7 * 24 * 60 * 60 * 1000;
+
+  let msg = `📋 *Günlük Brifing*\n📅 ${day} ${TR_MONTHS[month]} ${year}, ${TR_DAYS[dow]}\n`;
+
+  // Yaklaşan tek seferlik hatırlatmalar (7 gün içinde)
+  const onceList = await env.REMINDERS.list({ prefix: `once:${chatId}:` });
+  const upcoming = [];
+  for (const key of onceList.keys) {
+    const data = JSON.parse(await env.REMINDERS.get(key.name));
+    if (!data.sent && data.targetTime > nowMs && data.targetTime <= nowMs + weekMs) {
+      upcoming.push(data);
+    }
+  }
+
+  if (upcoming.length > 0) {
+    upcoming.sort((a, b) => a.targetTime - b.targetTime);
+    msg += `\n⏰ *Bu Haftaki Hatırlatmalar:*\n`;
+    for (const r of upcoming) {
+      const d = new Date(r.targetTime + 3 * 60 * 60 * 1000);
+      msg += `🔹 ${d.getUTCDate()}.${d.getUTCMonth()+1} ${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')} — ${r.msg}\n`;
+    }
+  }
+
+  // Bu ay içinde gelecek tekrarlı hatırlatmalar
+  const recList = await env.REMINDERS.list({ prefix: `rec:${chatId}:` });
+  const recItems = [];
+  for (const key of recList.keys) {
+    const data = JSON.parse(await env.REMINDERS.get(key.name));
+    if (data.targetDay >= day) recItems.push(data);
+  }
+
+  if (recItems.length > 0) {
+    recItems.sort((a, b) => a.targetDay - b.targetDay);
+    msg += `\n🔁 *Bu Ay Tekrarlı:*\n`;
+    for (const r of recItems) {
+      msg += `🔁 ${r.targetDay}. gün ${r.targetTime} — ${r.msg}\n`;
+    }
+  }
+
+  if (upcoming.length === 0 && recItems.length === 0) {
+    msg += `\n✨ Bu hafta için planlanmış hatırlatma yok.\n`;
+  }
+
+  msg += `\n📸 *Bugünkü Instagram içeriğini paylaşmayı unutma!*`;
+  return msg;
+}
+
+async function sendDailyBrifing(env) {
+  const nowTR    = new Date(new Date().getTime() + 3 * 60 * 60 * 1000);
+  const hour     = nowTR.getUTCHours();
+  const dateKey  = `${nowTR.getUTCFullYear()}-${nowTR.getUTCMonth()}-${nowTR.getUTCDate()}`;
+  if (hour !== 8) return;
+
+  const subs = await env.REMINDERS.list({ prefix: 'brifing:' });
+  for (const key of subs.keys) {
+    if (key.name.split(':').length !== 2) continue; // sadece brifing:{chatId}
+    const sentKey = `${key.name}:sent:${dateKey}`;
+    if (await env.REMINDERS.get(sentKey)) continue;
+    const data = JSON.parse(await env.REMINDERS.get(key.name));
+    const msg  = await buildBrifingMessage(data.chatId, env);
+    await send(data.chatId, msg, env);
+    await env.REMINDERS.put(sentKey, '1', { expirationTtl: 86400 });
+  }
+}
+
+// ── Uyandir ───────────────────────────────────────────────────────────────────
+async function handleUyandir(chatId, env) {
+  await send(chatId, "⏳ Servisler uyandırılıyor, lütfen bekleyin...", env);
+  try {
+    const start = Date.now();
+    const res = await fetch(`${env.IMAGE_SERVICE_URL}/`, { method: 'GET' });
+    const ms  = Date.now() - start;
+    if (res.ok) {
+      return send(chatId, `✅ Image service aktif! (${ms}ms)\n\nArtık /story komutunu kullanabilirsiniz.`, env);
+    } else {
+      return send(chatId, `⚠️ Image service yanıt verdi ama hata kodu döndü: ${res.status}`, env);
+    }
+  } catch (err) {
+    console.error("❌ UYANDIR ERROR:", err);
+    return send(chatId, "❌ Image service'e ulaşılamadı. Render kontrol panelini kontrol edin.", env);
+  }
+}
+
 // ── Story ─────────────────────────────────────────────────────────────────────
 
 // Adım 1: metni al, fotoğraf adımına geç
@@ -276,6 +417,92 @@ function bufToB64(buf) {
   return btoa(s);
 }
 
+// ── Önce/Sonra akışı ─────────────────────────────────────────────────────────
+
+async function handleOsKonum(text, chatId, state, env) {
+  if (!text || text.length < 2) return send(chatId, "❌ Konum çok kısa. Tekrar girin:", env);
+  state.osKonum = text;
+  state.step = STATES.OS_BASLIK;
+  await saveState(chatId, state, env);
+  return send(chatId, `✅ Konum: *${text}*\n\n📝 Başlık yazısını girin (örn: \`DÖNÜŞTÜRÜYORUZ.\`):`, env);
+}
+
+async function handleOsBaslik(text, chatId, state, env) {
+  if (!text || text.length < 2) return send(chatId, "❌ Başlık çok kısa. Tekrar girin:", env);
+  state.osBaslik = text;
+  state.step = STATES.OS_SATIR1;
+  await saveState(chatId, state, env);
+  return send(chatId, `✅ Başlık: *${text}*\n\n✏️ Alt satır 1 girin (örn: \`Yapısal güçlendirme\`):`, env);
+}
+
+async function handleOsSatir1(text, chatId, state, env) {
+  if (!text || text.length < 2) return send(chatId, "❌ Satır çok kısa. Tekrar girin:", env);
+  state.osSatir1 = text;
+  state.step = STATES.OS_SATIR2;
+  await saveState(chatId, state, env);
+  return send(chatId, `✅ Alt satır 1: *${text}*\n\n✏️ Alt satır 2 girin (örn: \`Cephe ve yüzey iyileştirmeleri\`):`, env);
+}
+
+async function handleOsSatir2(text, chatId, state, env) {
+  if (!text || text.length < 2) return send(chatId, "❌ Satır çok kısa. Tekrar girin:", env);
+  state.osSatir2 = text;
+  state.step = STATES.OS_ONCE;
+  await saveState(chatId, state, env);
+  return send(chatId, `✅ Alt satır 2: *${text}*\n\n📸 *ÖNCE* fotoğrafını gönderin:`, env);
+}
+
+async function handleOsOnce(text, chatId, state, env, photos) {
+  if (!photos || photos.length === 0) return send(chatId, "📸 Lütfen ÖNCE fotoğrafını gönderin:", env);
+  state.osOnceFileId = photos[photos.length - 1].file_id;
+  state.step = STATES.OS_SONRA;
+  await saveState(chatId, state, env);
+  return send(chatId, "✅ ÖNCE fotoğrafı alındı.\n\n📸 *SONRA* fotoğrafını gönderin:", env);
+}
+
+async function handleOsSonra(text, chatId, state, env, photos) {
+  if (!photos || photos.length === 0) return send(chatId, "📸 Lütfen SONRA fotoğrafını gönderin:", env);
+  const sonraFileId = photos[photos.length - 1].file_id;
+  const { osKonum, osBaslik, osSatir1, osSatir2, osOnceFileId } = state;
+  await resetState(chatId, env);
+  await generateAndSendOncesonra(osKonum, osBaslik, osSatir1, osSatir2, osOnceFileId, sonraFileId, chatId, env);
+}
+
+async function generateAndSendOncesonra(konum, baslik, satir1, satir2, onceFileId, sonraFileId, chatId, env) {
+  await send(chatId, "⏳ Görsel oluşturuluyor...", env);
+  try {
+    const fetchPhoto = async (fileId) => {
+      const fileRes  = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/getFile?file_id=${fileId}`);
+      const fileData = await fileRes.json();
+      const photoRes = await fetch(`https://api.telegram.org/file/bot${env.BOT_TOKEN}/${fileData.result.file_path}`);
+      return bufToB64(await photoRes.arrayBuffer());
+    };
+
+    const [onceB64, sonraB64] = await Promise.all([fetchPhoto(onceFileId), fetchPhoto(sonraFileId)]);
+
+    const imgRes = await fetch(`${env.IMAGE_SERVICE_URL}/oncesonra`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-secret': env.IMAGE_SECRET },
+      body: JSON.stringify({ konum, baslik, satir1, satir2, onceB64, sonraB64 })
+    });
+    if (!imgRes.ok) throw new Error(`Image service: ${imgRes.status}`);
+
+    const pngBuf = await imgRes.arrayBuffer();
+    const form   = new FormData();
+    form.append('chat_id',  String(chatId));
+    form.append('document', new Blob([pngBuf], { type: 'image/png' }), 'oncesonra.png');
+    form.append('caption',  "✅ Önce/Sonra görseliniz hazır!");
+
+    const tgRes = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/sendDocument`, { method: 'POST', body: form });
+    if (!tgRes.ok) {
+      console.error("❌ sendDocument error:", await tgRes.text());
+      await send(chatId, "⚠️ Görsel gönderilemedi. Tekrar deneyin.", env);
+    }
+  } catch (err) {
+    console.error("❌ ONCESONRA ERROR:", err);
+    await send(chatId, "⚠️ Görsel oluşturulurken hata oluştu.", env);
+  }
+}
+
 // ── Tek seferlik hatırlatma akışı ─────────────────────────────────────────────
 async function handleOnceDate(text, chatId, state, env) {
   const match = text.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
@@ -313,7 +540,7 @@ async function handleOnceHourly(text, chatId, state, env) {
   const hourly = text.trim().toUpperCase() === 'E';
   const { day, month, year } = state.parsedDate;
   const { hour, minute }     = state.parsedTime;
-  const remindDate = new Date(year, month - 1, day, hour, minute);
+  const remindDate = new Date(Date.UTC(year, month - 1, day, hour - 3, minute));
   if (remindDate < new Date()) {
     await resetState(chatId, env);
     return send(chatId, "❌ *Geçmiş tarih!* Lütfen yeni bir hatırlatma oluşturun.", env);
@@ -384,16 +611,19 @@ function cryptoRandomId(len) {
 
 // ── Cron ──────────────────────────────────────────────────────────────────────
 async function runCron(env) {
+  await sendDailyBrifing(env);
+
   const list         = await env.REMINDERS.list();
   const now          = new Date();
-  const today        = now.getDate();
-  const currentMonth = now.getMonth();
-  const currentYear  = now.getFullYear();
-  const nowMinutes   = now.getHours() * 60 + now.getMinutes();
-  const todayStr     = now.toDateString();
+  const nowTR        = new Date(now.getTime() + 3 * 60 * 60 * 1000); // UTC+3 (Türkiye)
+  const today        = nowTR.getUTCDate();
+  const currentMonth = nowTR.getUTCMonth();
+  const currentYear  = nowTR.getUTCFullYear();
+  const nowMinutes   = nowTR.getUTCHours() * 60 + nowTR.getUTCMinutes();
+  const todayStr     = `${currentYear}-${currentMonth}-${today}`;
 
   for (const key of list.keys) {
-    if (key.name.startsWith('user:') || key.name.includes(':cd')) continue;
+    if (key.name.startsWith('user:') || key.name.startsWith('brifing:') || key.name.includes(':cd')) continue;
     let data;
     try { data = JSON.parse(await env.REMINDERS.get(key.name)); }
     catch (e) { continue; }

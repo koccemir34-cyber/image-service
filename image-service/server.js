@@ -45,6 +45,34 @@ app.post('/generate', async (req, res) => {
   }
 });
 
+app.post('/oncesonra', (req, res) => {
+  if (SECRET && req.headers['x-secret'] !== SECRET)
+    return res.status(401).json({ error: 'unauthorized' });
+
+  const { konum, baslik, satir1, satir2, onceB64, sonraB64 } = req.body;
+  if (!konum || !baslik || !satir1 || !satir2 || !onceB64 || !sonraB64)
+    return res.status(400).json({ error: 'missing fields' });
+
+  try {
+    const svg   = buildOncesonraSvg(konum, baslik, satir1, satir2, onceB64, sonraB64);
+    const resvg = new Resvg(svg, {
+      font: {
+        loadSystemFonts: false,
+        fontBuffers: [fontBuffer],
+        defaultFontFamily: 'Inter',
+        sansSerifFamily: 'Inter',
+      },
+      fitTo: { mode: 'original' }
+    });
+    const png = resvg.render().asPng();
+    res.set('Content-Type', 'image/png');
+    res.send(Buffer.from(png));
+  } catch (e) {
+    console.error('Oncesonra error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.listen(process.env.PORT || 3000, () =>
   console.log('Ready on port', process.env.PORT || 3000)
 );
@@ -372,4 +400,119 @@ async function buildSvg(rawText, photoB64, photoWidth, photoHeight) {
 function escapeXml(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
           .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
+
+// ── Önce/Sonra SVG ────────────────────────────────────────────────────────────
+function buildOncesonraSvg(konum, baslik, satir1, satir2, onceB64, sonraB64) {
+  const W = 1080;
+  const H = 1350;
+
+  // Başlık font boyutu — uzun metinler için küçült
+  const TITLE_BASE = 76;
+  const titleEstW  = baslik.length * TITLE_BASE * 0.56;
+  const titleFS    = titleEstW > 960 ? Math.round(TITLE_BASE * 960 / titleEstW) : TITLE_BASE;
+
+  // Konum satırı: pin ikonu + metin, yatayda ortalı
+  const LOC_FS    = 38;
+  const PIN_W     = 56;  // pin ikonunun kapladığı genişlik
+  const PIN_GAP   = 12;
+  const locEstW   = konum.length * LOC_FS * 0.55;
+  const locTotalW = PIN_W + PIN_GAP + locEstW;
+  const locStartX = Math.max(40, Math.round((W - locTotalW) / 2));
+  const pinCX     = locStartX + 26;
+  const locTextX  = locStartX + PIN_W + PIN_GAP;
+
+  // Fotoğraf alanı
+  const PH_Y  = 255;
+  const PH_H  = 575;
+  const PH_W  = 510;
+  const PH_X1 = 20;
+  const PH_X2 = 550;
+
+  // Footer
+  const FT_Y = 850;
+
+  // Servis satırı font boyutu
+  const SVC_FS  = 34;
+  const SVC_MAX = 870; // px cinsinden max genişlik
+  const s1FS = satir1.length * SVC_FS * 0.55 > SVC_MAX ? Math.round(SVC_FS * SVC_MAX / (satir1.length * SVC_FS * 0.55)) : SVC_FS;
+  const s2FS = satir2.length * SVC_FS * 0.55 > SVC_MAX ? Math.round(SVC_FS * SVC_MAX / (satir2.length * SVC_FS * 0.55)) : SVC_FS;
+
+  const now     = new Date();
+  const dateStr = `${now.getDate().toString().padStart(2,'0')}.${(now.getMonth()+1).toString().padStart(2,'0')}.${now.getFullYear()}`;
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"
+     xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <defs>
+    <clipPath id="lp"><rect x="${PH_X1}" y="${PH_Y}" width="${PH_W}" height="${PH_H}" rx="10"/></clipPath>
+    <clipPath id="rp"><rect x="${PH_X2}" y="${PH_Y}" width="${PH_W}" height="${PH_H}" rx="10"/></clipPath>
+    <clipPath id="lc"><circle cx="${W/2}" cy="${FT_Y+85}" r="58"/></clipPath>
+  </defs>
+
+  <!-- Arka plan -->
+  <rect width="${W}" height="${H}" fill="#EEF2F7"/>
+  <!-- Header beyaz alan -->
+  <rect x="0" y="0" width="${W}" height="${PH_Y}" fill="#FFFFFF"/>
+  <!-- Footer beyaz alan -->
+  <rect x="0" y="${FT_Y}" width="${W}" height="${H - FT_Y}" fill="#FFFFFF"/>
+
+  <!-- Konum pin ikonu (SVG path) -->
+  <path d="M${pinCX-22},${52} C${pinCX-22},${36} ${pinCX-11},${22} ${pinCX},${22}
+           C${pinCX+11},${22} ${pinCX+22},${36} ${pinCX+22},${52}
+           C${pinCX+22},${68} ${pinCX},${90} ${pinCX},${90}
+           C${pinCX},${90} ${pinCX-22},${68} ${pinCX-22},${52} Z" fill="#C1272D"/>
+  <circle cx="${pinCX}" cy="52" r="9" fill="white"/>
+
+  <!-- Konum metni -->
+  <text x="${locTextX}" y="76"
+        font-family="Inter" font-size="${LOC_FS}" font-weight="700" fill="#0D1B3E">${escapeXml(konum)}</text>
+
+  <!-- Başlık -->
+  <text x="${W/2}" y="183" text-anchor="middle"
+        font-family="Inter" font-size="${titleFS}" font-weight="900" fill="#0D1B3E">${escapeXml(baslik)}</text>
+
+  <!-- ÖNCE fotoğrafı -->
+  <image x="${PH_X1}" y="${PH_Y}" width="${PH_W}" height="${PH_H}"
+         href="data:image/jpeg;base64,${onceB64}"
+         clip-path="url(#lp)" preserveAspectRatio="xMidYMid slice"/>
+  <rect x="${PH_X1}" y="${PH_Y}" width="170" height="60" fill="#0D1B3E"/>
+  <text x="${PH_X1+85}" y="${PH_Y+41}" text-anchor="middle"
+        font-family="Inter" font-size="34" font-weight="800" fill="#FFFFFF">ÖNCE</text>
+
+  <!-- SONRA fotoğrafı -->
+  <image x="${PH_X2}" y="${PH_Y}" width="${PH_W}" height="${PH_H}"
+         href="data:image/jpeg;base64,${sonraB64}"
+         clip-path="url(#rp)" preserveAspectRatio="xMidYMid slice"/>
+  <rect x="${PH_X2}" y="${PH_Y}" width="190" height="60" fill="#B91C1C"/>
+  <text x="${PH_X2+95}" y="${PH_Y+41}" text-anchor="middle"
+        font-family="Inter" font-size="34" font-weight="800" fill="#FFFFFF">SONRA</text>
+
+  <!-- Logo -->
+  <image x="${W/2-58}" y="${FT_Y+27}" width="116" height="116"
+         href="data:image/jpeg;base64,${LOGO_B64}"
+         clip-path="url(#lc)"/>
+  <circle cx="${W/2}" cy="${FT_Y+85}" r="58" fill="none" stroke="#E2E8F0" stroke-width="2"/>
+
+  <!-- Firma adı -->
+  <text x="${W/2}" y="${FT_Y+195}" text-anchor="middle"
+        font-family="Inter" font-size="44" font-weight="900" fill="#0D1B3E">SELHATTİN KOÇ</text>
+  <text x="${W/2}" y="${FT_Y+240}" text-anchor="middle"
+        font-family="Inter" font-size="27" font-weight="600" fill="#94A3B8">— İNŞAAT —</text>
+
+  <!-- Ayırıcı -->
+  <line x1="80" y1="${FT_Y+270}" x2="${W-80}" y2="${FT_Y+270}" stroke="#E2E8F0" stroke-width="2"/>
+
+  <!-- Servis satırı 1 -->
+  <rect x="80" y="${FT_Y+295}" width="6" height="${s1FS}" fill="#C1272D" rx="3"/>
+  <text x="102" y="${FT_Y+322}" font-family="Inter" font-size="${s1FS}" font-weight="500" fill="#1E293B">${escapeXml(satir1)}</text>
+
+  <!-- Servis satırı 2 -->
+  <rect x="80" y="${FT_Y+355}" width="6" height="${s2FS}" fill="#C1272D" rx="3"/>
+  <text x="102" y="${FT_Y+382}" font-family="Inter" font-size="${s2FS}" font-weight="500" fill="#1E293B">${escapeXml(satir2)}</text>
+
+  <!-- Website + tarih -->
+  <text x="${W/2}" y="${FT_Y+448}" text-anchor="middle"
+        font-family="Inter" font-size="22" font-weight="400" fill="#CBD5E1">${WEBSITE} • ${dateStr}</text>
+</svg>`;
 }
