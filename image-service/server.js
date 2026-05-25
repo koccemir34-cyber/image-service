@@ -3,6 +3,9 @@ import { Resvg } from '@resvg/resvg-js';
 import { readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const piexif  = require('piexifjs');
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fontBuffer = readFileSync(join(__dirname, 'inter.ttf'));
@@ -31,8 +34,8 @@ app.post('/generate', async (req, res) => {
       font: {
         loadSystemFonts: false,
         fontBuffers: [fontBuffer],
-        defaultFontFamily: 'Inter',
-        sansSerifFamily: 'Inter',
+        defaultFontFamily: 'Inter Variable',
+        sansSerifFamily: 'Inter Variable',
       },
       fitTo: { mode: 'original' }
     });
@@ -59,8 +62,8 @@ app.post('/oncesonra', (req, res) => {
       font: {
         loadSystemFonts: false,
         fontBuffers: [fontBuffer],
-        defaultFontFamily: 'Inter',
-        sansSerifFamily: 'Inter',
+        defaultFontFamily: 'Inter Variable',
+        sansSerifFamily: 'Inter Variable',
       },
       fitTo: { mode: 'original' }
     });
@@ -69,6 +72,86 @@ app.post('/oncesonra', (req, res) => {
     res.send(Buffer.from(png));
   } catch (e) {
     console.error('Oncesonra error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── EXIF ─────────────────────────────────────────────────────────────────────
+const CAMERA_PROFILES = [
+  { make: 'Apple',   model: 'iPhone 14 Pro',    software: '16.5.1',           fnum: [178, 100], focal: [686, 100], focal35: 24 },
+  { make: 'Apple',   model: 'iPhone 15',        software: '17.4.1',           fnum: [160, 100], focal: [570, 100], focal35: 26 },
+  { make: 'Apple',   model: 'iPhone 15 Pro Max',software: '17.5',             fnum: [178, 100], focal: [686, 100], focal35: 24 },
+  { make: 'samsung', model: 'SM-S918B',         software: 'S918BXXS5EXD5',   fnum: [170, 100], focal: [630, 100], focal35: 23 },
+  { make: 'Google',  model: 'Pixel 8 Pro',      software: 'UP1A.231005.007',  fnum: [168, 100], focal: [650, 100], focal35: 24 },
+  { make: 'Sony',    model: 'XQ-EC72',          software: '13.4.0.0.3',       fnum: [190, 100], focal: [240, 100], focal35: 24 },
+];
+
+app.post('/exif', (req, res) => {
+  if (SECRET && req.headers['x-secret'] !== SECRET)
+    return res.status(401).json({ error: 'unauthorized' });
+
+  const { imageB64 } = req.body;
+  if (!imageB64) return res.status(400).json({ error: 'imageB64 required' });
+
+  try {
+    const binary  = Buffer.from(imageB64, 'base64').toString('binary');
+    const stripped = piexif.remove(binary);
+
+    const cam = CAMERA_PROFILES[Math.floor(Math.random() * CAMERA_PROFILES.length)];
+
+    const isoPool    = [50, 50, 64, 100, 100, 125, 200, 400, 800, 1600];
+    const iso        = isoPool[Math.floor(Math.random() * isoPool.length)];
+    const shutters   = [[1,4000],[1,2000],[1,1000],[1,500],[1,250],[1,125],[1,60],[1,30]];
+    const [expN, expD] = shutters[Math.floor(Math.random() * shutters.length)];
+
+    const daysBack = Math.floor(Math.random() * 30);
+    const dt       = new Date(Date.now() - daysBack * 86400000 - Math.floor(Math.random() * 72000000));
+    const pad      = n => String(n).padStart(2, '0');
+    const dtStr    = `${dt.getFullYear()}:${pad(dt.getMonth()+1)}:${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`;
+
+    const exifObj = {
+      '0th': {
+        271: cam.make,
+        272: cam.model,
+        274: 1,
+        282: [72, 1],
+        283: [72, 1],
+        296: 2,
+        305: cam.software,
+        306: dtStr,
+        531: 1,
+      },
+      'Exif': {
+        33434: [expN, expD],
+        33437: cam.fnum,
+        34850: 2,
+        34855: iso,
+        36867: dtStr,
+        36868: dtStr,
+        37380: [0, 10],
+        37383: 5,
+        37385: 0,
+        37386: cam.focal,
+        40961: 1,
+        41986: 0,
+        41987: 0,
+        41988: [1, 1],
+        41989: cam.focal35,
+        41990: 0,
+      },
+      'GPS': {},
+      '1st': {},
+    };
+
+    const exifBytes = piexif.dump(exifObj);
+    const result    = piexif.insert(exifBytes, stripped);
+    const outBuf    = Buffer.from(result, 'binary');
+
+    res.set('Content-Type', 'image/jpeg');
+    res.set('X-Camera', `${cam.make} ${cam.model}`);
+    res.send(outBuf);
+  } catch (e) {
+    console.error('EXIF error:', e);
     res.status(500).json({ error: e.message });
   }
 });
@@ -241,7 +324,7 @@ async function buildSvg(rawText, photoB64, photoWidth, photoHeight) {
     if (!hasEmoji) {
       els.push(
         `<text x="${TEXT_X}" y="${Math.round(curY)}"
-          font-family="Inter" font-size="${FS}" font-weight="700"
+          font-family="Inter Variable" font-size="${FS}" font-weight="700"
           fill="#0F172A">${escapeXml(line)}</text>`
       );
     } else {
@@ -250,7 +333,7 @@ async function buildSvg(rawText, photoB64, photoWidth, photoHeight) {
         if (seg.type === 'text' && seg.value) {
           els.push(
             `<text x="${Math.round(x)}" y="${Math.round(curY)}"
-              font-family="Inter" font-size="${FS}" font-weight="700"
+              font-family="Inter Variable" font-size="${FS}" font-weight="700"
               fill="#0F172A">${escapeXml(seg.value)}</text>`
           );
           x += seg.value.length * CHAR_W;
@@ -363,13 +446,13 @@ async function buildSvg(rawText, photoB64, photoWidth, photoHeight) {
 
   <!-- Şirket adı (hiyerarşi: büyük isim → kırmızı sektör → gri handle) -->
   <text x="${nameX}" y="${nameY}"
-        font-family="Inter" font-size="28" font-weight="900"
+        font-family="Inter Variable" font-size="28" font-weight="900"
         fill="#0F172A">SELHATTİN KOÇ</text>
   <text x="${nameX}" y="${subY}"
-        font-family="Inter" font-size="22" font-weight="700"
+        font-family="Inter Variable" font-size="22" font-weight="700"
         fill="#DC2626">İNŞAAT TAAHHÜT</text>
   <text x="${nameX}" y="${handleY}"
-        font-family="Inter" font-size="19" font-weight="400"
+        font-family="Inter Variable" font-size="19" font-weight="400"
         fill="#94A3B8">@selhattinkocinsaat</text>
 
   <!-- Sağ logo -->
@@ -389,10 +472,10 @@ async function buildSvg(rawText, photoB64, photoWidth, photoHeight) {
 
   <!-- Footer içeriği -->
   <text x="${TEXT_X}" y="${footAreaY + FOOT_PAD + 22}"
-        font-family="Inter" font-size="22" font-weight="600"
+        font-family="Inter Variable" font-size="22" font-weight="600"
         fill="#1E293B">${escapeXml(WEBSITE)}</text>
   <text x="${CARD_X + CARD_W - PAD}" y="${footAreaY + FOOT_PAD + 22}"
-        font-family="Inter" font-size="18" font-weight="400"
+        font-family="Inter Variable" font-size="18" font-weight="400"
         fill="#94A3B8" text-anchor="end">${dateStr}</text>
 </svg>`;
 }
@@ -466,11 +549,11 @@ function buildOncesonraSvg(konum, baslik, satir1, satir2, onceB64, sonraB64) {
 
   <!-- Konum metni -->
   <text x="${locTextX}" y="76"
-        font-family="Inter" font-size="${LOC_FS}" font-weight="700" fill="#0D1B3E">${escapeXml(konum)}</text>
+        font-family="Inter Variable" font-size="${LOC_FS}" font-weight="700" fill="#0D1B3E">${escapeXml(konum)}</text>
 
   <!-- Başlık -->
   <text x="${W/2}" y="183" text-anchor="middle"
-        font-family="Inter" font-size="${titleFS}" font-weight="900" fill="#0D1B3E">${escapeXml(baslik)}</text>
+        font-family="Inter Variable" font-size="${titleFS}" font-weight="900" fill="#0D1B3E">${escapeXml(baslik)}</text>
 
   <!-- ÖNCE fotoğrafı -->
   <image x="${PH_X1}" y="${PH_Y}" width="${PH_W}" height="${PH_H}"
@@ -478,7 +561,7 @@ function buildOncesonraSvg(konum, baslik, satir1, satir2, onceB64, sonraB64) {
          clip-path="url(#lp)" preserveAspectRatio="xMidYMid slice"/>
   <rect x="${PH_X1}" y="${PH_Y}" width="170" height="60" fill="#0D1B3E"/>
   <text x="${PH_X1+85}" y="${PH_Y+41}" text-anchor="middle"
-        font-family="Inter" font-size="34" font-weight="800" fill="#FFFFFF">ÖNCE</text>
+        font-family="Inter Variable" font-size="34" font-weight="800" fill="#FFFFFF">ÖNCE</text>
 
   <!-- SONRA fotoğrafı -->
   <image x="${PH_X2}" y="${PH_Y}" width="${PH_W}" height="${PH_H}"
@@ -486,7 +569,7 @@ function buildOncesonraSvg(konum, baslik, satir1, satir2, onceB64, sonraB64) {
          clip-path="url(#rp)" preserveAspectRatio="xMidYMid slice"/>
   <rect x="${PH_X2}" y="${PH_Y}" width="190" height="60" fill="#B91C1C"/>
   <text x="${PH_X2+95}" y="${PH_Y+41}" text-anchor="middle"
-        font-family="Inter" font-size="34" font-weight="800" fill="#FFFFFF">SONRA</text>
+        font-family="Inter Variable" font-size="34" font-weight="800" fill="#FFFFFF">SONRA</text>
 
   <!-- Logo -->
   <image x="${W/2-58}" y="${FT_Y+27}" width="116" height="116"
@@ -496,23 +579,23 @@ function buildOncesonraSvg(konum, baslik, satir1, satir2, onceB64, sonraB64) {
 
   <!-- Firma adı -->
   <text x="${W/2}" y="${FT_Y+195}" text-anchor="middle"
-        font-family="Inter" font-size="44" font-weight="900" fill="#0D1B3E">SELHATTİN KOÇ</text>
+        font-family="Inter Variable" font-size="44" font-weight="900" fill="#0D1B3E">SELHATTİN KOÇ</text>
   <text x="${W/2}" y="${FT_Y+240}" text-anchor="middle"
-        font-family="Inter" font-size="27" font-weight="600" fill="#94A3B8">— İNŞAAT —</text>
+        font-family="Inter Variable" font-size="27" font-weight="600" fill="#94A3B8">— İNŞAAT —</text>
 
   <!-- Ayırıcı -->
   <line x1="80" y1="${FT_Y+270}" x2="${W-80}" y2="${FT_Y+270}" stroke="#E2E8F0" stroke-width="2"/>
 
   <!-- Servis satırı 1 -->
   <rect x="80" y="${FT_Y+295}" width="6" height="${s1FS}" fill="#C1272D" rx="3"/>
-  <text x="102" y="${FT_Y+322}" font-family="Inter" font-size="${s1FS}" font-weight="500" fill="#1E293B">${escapeXml(satir1)}</text>
+  <text x="102" y="${FT_Y+322}" font-family="Inter Variable" font-size="${s1FS}" font-weight="500" fill="#1E293B">${escapeXml(satir1)}</text>
 
   <!-- Servis satırı 2 -->
   <rect x="80" y="${FT_Y+355}" width="6" height="${s2FS}" fill="#C1272D" rx="3"/>
-  <text x="102" y="${FT_Y+382}" font-family="Inter" font-size="${s2FS}" font-weight="500" fill="#1E293B">${escapeXml(satir2)}</text>
+  <text x="102" y="${FT_Y+382}" font-family="Inter Variable" font-size="${s2FS}" font-weight="500" fill="#1E293B">${escapeXml(satir2)}</text>
 
   <!-- Website + tarih -->
   <text x="${W/2}" y="${FT_Y+448}" text-anchor="middle"
-        font-family="Inter" font-size="22" font-weight="400" fill="#CBD5E1">${WEBSITE} • ${dateStr}</text>
+        font-family="Inter Variable" font-size="22" font-weight="400" fill="#CBD5E1">${WEBSITE} • ${dateStr}</text>
 </svg>`;
 }
