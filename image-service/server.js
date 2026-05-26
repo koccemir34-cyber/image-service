@@ -4,8 +4,6 @@ import { readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
-const piexif  = require('piexifjs');
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fontBuffer = readFileSync(join(__dirname, 'inter.ttf'));
@@ -92,6 +90,14 @@ app.post('/exif', (req, res) => {
 
   const { imageB64 } = req.body;
   if (!imageB64) return res.status(400).json({ error: 'imageB64 required' });
+
+  let piexif;
+  try {
+    const require = createRequire(import.meta.url);
+    piexif = require('piexifjs');
+  } catch {
+    return res.status(500).json({ error: 'piexifjs not installed' });
+  }
 
   try {
     const binary  = Buffer.from(imageB64, 'base64').toString('binary');
