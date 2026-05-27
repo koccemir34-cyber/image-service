@@ -356,7 +356,7 @@ async function buildSvg(rawText, photoB64, photoWidth, photoHeight) {
          width="${TEXT_W}" height="${PHOTO_H}"
          href="data:image/jpeg;base64,${photoB64}"
          clip-path="url(#photoClip)" filter="url(#pShadow)"
-         preserveAspectRatio="xMidYMid slice"/>` : '';
+         preserveAspectRatio="xMidYMid meet"/>` : '';
 
   // TR saatiyle tarih
   const now     = new Date(Date.now() + 3 * 60 * 60 * 1000);
