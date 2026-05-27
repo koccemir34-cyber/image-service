@@ -22,7 +22,7 @@ const BRANDS = {
   },
   remaz: {
     logoB64:  LOGO_REMAZ_B64,
-    logoMime: 'image/png',
+    logoMime: 'image/jpeg',
     line1:    'REMAZ İNŞAAT',
     line2:    'TAAHHÜT',
     handle:   '@remazinsaat',
@@ -391,9 +391,7 @@ async function buildSvg(rawText, photoB64, photoWidth, photoHeight, brand, beta 
       <stop offset="45%" stop-color="rgba(0,0,0,0)"/>
       <stop offset="100%" stop-color="rgba(0,0,0,0.42)"/>
     </linearGradient>
-    <clipPath id="fLogoClip">
-      <circle cx="${PAD + 28}" cy="${FTR_Y + Math.round(FTR_H / 2)}" r="28"/>
-    </clipPath>` : ''}
+` : ''}
   </defs>
 
   <!-- Beyaz arka plan -->
@@ -448,11 +446,6 @@ async function buildSvg(rawText, photoB64, photoWidth, photoHeight, brand, beta 
   <!-- Footer -->
   <rect x="0" y="${FTR_Y}" width="${W}" height="${FTR_H}" fill="#F1F5F9"/>
   <rect x="0" y="${FTR_Y}" width="${W}" height="4" fill="${RED}"/>
-  ${beta ? `
-  <image x="${PAD}" y="${FTR_Y + Math.round((FTR_H - 56) / 2)}"
-         width="56" height="56"
-         href="data:${brand.logoMime};base64,${brand.logoB64}"
-         clip-path="url(#fLogoClip)"/>` : ''}
   <text x="${W / 2}" y="${FTR_Y + 66}" text-anchor="middle"
         font-family="Inter Variable" font-size="26" font-weight="600"
         fill="#334155">${escapeXml(brand.website)}</text>
