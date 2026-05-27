@@ -41,14 +41,14 @@ app.post('/generate', async (req, res) => {
   if (SECRET && req.headers['x-secret'] !== SECRET)
     return res.status(401).json({ error: 'unauthorized' });
 
-  const { text, photoB64, photoWidth, photoHeight, brand } = req.body;
+  const { text, photoB64, photoWidth, photoHeight, brand, beta } = req.body;
   if (!text) return res.status(400).json({ error: 'text required' });
   if (text.length > 600) return res.status(400).json({ error: 'text too long' });
 
   const brandCfg = BRANDS[brand] || BRANDS.selhattin;
 
   try {
-    const svg = await buildSvg(text, photoB64 || null, photoWidth || null, photoHeight || null, brandCfg);
+    const svg = await buildSvg(text, photoB64 || null, photoWidth || null, photoHeight || null, brandCfg, !!beta);
     const resvg = new Resvg(svg, {
       font: {
         loadSystemFonts: false,
@@ -238,7 +238,7 @@ function wrapText(text, max) {
 }
 
 // ── SVG ─────────────────────────────────────────────────────────────────────
-async function buildSvg(rawText, photoB64, photoWidth, photoHeight, brand) {
+async function buildSvg(rawText, photoB64, photoWidth, photoHeight, brand, beta = false) {
   brand = brand || BRANDS.selhattin;
   const W = 1080;
 
@@ -382,6 +382,18 @@ async function buildSvg(rawText, photoB64, photoWidth, photoHeight, brand) {
       <feDropShadow dx="0" dy="6" stdDeviation="14"
                     flood-color="#000000" flood-opacity="0.16"/>
     </filter>
+    ${beta ? `
+    <filter id="cardShadow" x="-5%" y="-6%" width="110%" height="118%">
+      <feDropShadow dx="0" dy="8" stdDeviation="22"
+                    flood-color="#0D1B3E" flood-opacity="0.09"/>
+    </filter>
+    <linearGradient id="photoGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="45%" stop-color="rgba(0,0,0,0)"/>
+      <stop offset="100%" stop-color="rgba(0,0,0,0.42)"/>
+    </linearGradient>
+    <clipPath id="fLogoClip">
+      <circle cx="${PAD + 28}" cy="${FTR_Y + Math.round(FTR_H / 2)}" r="28"/>
+    </clipPath>` : ''}
   </defs>
 
   <!-- Beyaz arka plan -->
@@ -411,15 +423,36 @@ async function buildSvg(rawText, photoB64, photoWidth, photoHeight, brand) {
         fill="rgba(255,255,255,0.45)">${escapeXml(brand.handle)}</text>
 
 
+  ${beta ? `
+  <!-- Beta: metin kartı + sol aksan + tırnak dekorasyonu -->
+  <rect x="48" y="${CONTENT_Y - 32}"
+        width="${W - 96}" height="${Math.round(TEXT_H + 64)}"
+        rx="22" ry="22" fill="#F8FAFC" filter="url(#cardShadow)"/>
+  <rect x="48" y="${CONTENT_Y - 32}"
+        width="7" height="${Math.round(TEXT_H + 64)}"
+        rx="3" fill="${RED}"/>
+  <text x="68" y="${CONTENT_Y + 100}"
+        font-family="Inter Variable" font-size="160" font-weight="900"
+        fill="${NAVY}" opacity="0.05">“</text>` : ''}
+
   <!-- İçerik metni -->
   ${els.join('\n  ')}
 
   <!-- Fotoğraf -->
   ${photoImg}
+  ${beta && photoB64 ? `
+  <rect x="${TEXT_X}" y="${Math.round(PHOTO_Y)}"
+        width="${TEXT_W}" height="${PHOTO_H}"
+        fill="url(#photoGrad)" clip-path="url(#photoClip)"/>` : ''}
 
   <!-- Footer -->
   <rect x="0" y="${FTR_Y}" width="${W}" height="${FTR_H}" fill="#F1F5F9"/>
   <rect x="0" y="${FTR_Y}" width="${W}" height="4" fill="${RED}"/>
+  ${beta ? `
+  <image x="${PAD}" y="${FTR_Y + Math.round((FTR_H - 56) / 2)}"
+         width="56" height="56"
+         href="data:${brand.logoMime};base64,${brand.logoB64}"
+         clip-path="url(#fLogoClip)"/>` : ''}
   <text x="${W / 2}" y="${FTR_Y + 66}" text-anchor="middle"
         font-family="Inter Variable" font-size="26" font-weight="600"
         fill="#334155">${escapeXml(brand.website)}</text>
