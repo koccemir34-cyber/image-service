@@ -302,10 +302,6 @@ async function buildSvg(rawText, photoB64, photoWidth, photoHeight) {
   const FTR_Y = Math.max(1920 - FTR_H, PHOTO_END + 68);
   const H     = FTR_Y + FTR_H;
 
-  // Sol accent bar: header altından footer üstüne kadar
-  const ACC_BAR_Y = HDR_H;
-  const ACC_BAR_H = FTR_Y - HDR_H;
-
   // Metin elementleri
   let curY = CONTENT_Y + FS * 0.85;
   const els = [];
@@ -412,8 +408,6 @@ async function buildSvg(rawText, photoB64, photoWidth, photoHeight) {
         font-family="Inter Variable" font-size="20" font-weight="400"
         fill="rgba(255,255,255,0.45)">@selhattinkocinsaat</text>
 
-  <!-- Sol kırmızı accent bar (içerik boyunca) -->
-  <rect x="44" y="${ACC_BAR_Y}" width="5" height="${ACC_BAR_H}" fill="${RED}" rx="2.5"/>
 
   <!-- İçerik metni -->
   ${els.join('\n  ')}
