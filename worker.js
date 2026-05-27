@@ -367,9 +367,9 @@ async function handleStoryPhotoStep(text, chatId, state, env, photos) {
   await generateAndSendStory(state.storyText, chatId, env, hasPhoto ? photos : null);
 }
 
-// Ortak üretim fonksiyonu
+// Ortak üretim fonksiyonu — 3 stili paralel üretip album olarak gönderir
 async function generateAndSendStory(storyText, chatId, env, photos) {
-  await send(chatId, "⏳ Görsel oluşturuluyor...", env);
+  await send(chatId, "⏳ 3 farklı tasarım oluşturuluyor...", env);
   try {
     let photoB64 = null, photoWidth = null, photoHeight = null;
     if (photos && photos.length > 0) {
@@ -384,23 +384,33 @@ async function generateAndSendStory(storyText, chatId, env, photos) {
       }
     }
 
-    const imgRes = await fetch(`${env.IMAGE_SERVICE_URL}/generate`, {
+    const body = { text: storyText, photoB64, photoWidth, photoHeight };
+    const callApi = (style) => fetch(`${env.IMAGE_SERVICE_URL}/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-secret': env.IMAGE_SECRET },
-      body: JSON.stringify({ text: storyText, photoB64, photoWidth, photoHeight })
+      body: JSON.stringify({ ...body, style })
     });
-    if (!imgRes.ok) throw new Error(`Image service: ${imgRes.status}`);
 
-    const pngBuf = await imgRes.arrayBuffer();
-    const form   = new FormData();
-    form.append('chat_id',  String(chatId));
-    form.append('document', new Blob([pngBuf], { type: 'image/png' }), 'story.png');
-    form.append('caption',  "✅ Story görseliniz hazır! Instagram'a yükleyebilirsiniz.");
+    const [r1, r2, r3] = await Promise.all([callApi('classic'), callApi('cinematic'), callApi('luxury')]);
+    if (!r1.ok || !r2.ok || !r3.ok) throw new Error(`Image service hata: ${r1.status} ${r2.status} ${r3.status}`);
 
-    const tgRes = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/sendDocument`, { method: 'POST', body: form });
+    const [buf1, buf2, buf3] = await Promise.all([r1.arrayBuffer(), r2.arrayBuffer(), r3.arrayBuffer()]);
+
+    const form = new FormData();
+    form.append('chat_id', String(chatId));
+    form.append('klasik',     new Blob([buf1], { type: 'image/png' }), 'klasik.png');
+    form.append('sinematik',  new Blob([buf2], { type: 'image/png' }), 'sinematik.png');
+    form.append('luks',       new Blob([buf3], { type: 'image/png' }), 'luks.png');
+    form.append('media', JSON.stringify([
+      { type: 'document', media: 'attach://klasik',    caption: '1️⃣ Klasik'    },
+      { type: 'document', media: 'attach://sinematik', caption: '2️⃣ Sinematik' },
+      { type: 'document', media: 'attach://luks',      caption: '3️⃣ Lüks'      },
+    ]));
+
+    const tgRes = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/sendMediaGroup`, { method: 'POST', body: form });
     if (!tgRes.ok) {
-      console.error("❌ sendDocument error:", await tgRes.text());
-      await send(chatId, "⚠️ Görsel gönderilemedi. Tekrar deneyin.", env);
+      console.error("❌ sendMediaGroup error:", await tgRes.text());
+      await send(chatId, "⚠️ Görseller gönderilemedi. Tekrar deneyin.", env);
     }
   } catch (err) {
     console.error("❌ STORY ERROR:", err);

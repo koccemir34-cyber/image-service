@@ -18,28 +18,37 @@ app.use(express.json({ limit: '15mb' }));
 
 app.get('/', (_, res) => res.send('Image service active ✅'));
 
+function renderSvg(svg) {
+  const resvg = new Resvg(svg, {
+    font: {
+      loadSystemFonts: false,
+      fontBuffers: [fontBuffer],
+      defaultFontFamily: 'Inter Variable',
+      sansSerifFamily: 'Inter Variable',
+    },
+    fitTo: { mode: 'original' }
+  });
+  return Buffer.from(resvg.render().asPng());
+}
+
 app.post('/generate', async (req, res) => {
   if (SECRET && req.headers['x-secret'] !== SECRET)
     return res.status(401).json({ error: 'unauthorized' });
 
-  const { text, photoB64, photoWidth, photoHeight } = req.body;
+  const { text, photoB64, photoWidth, photoHeight, style } = req.body;
   if (!text) return res.status(400).json({ error: 'text required' });
   if (text.length > 600) return res.status(400).json({ error: 'text too long' });
 
   try {
-    const svg = await buildSvg(text, photoB64 || null, photoWidth || null, photoHeight || null);
-    const resvg = new Resvg(svg, {
-      font: {
-        loadSystemFonts: false,
-        fontBuffers: [fontBuffer],
-        defaultFontFamily: 'Inter Variable',
-        sansSerifFamily: 'Inter Variable',
-      },
-      fitTo: { mode: 'original' }
-    });
-    const png = resvg.render().asPng();
+    const p = [photoB64 || null, photoWidth || null, photoHeight || null];
+    let svg;
+    if (style === 'cinematic') svg = await buildSvgCinematic(text, ...p);
+    else if (style === 'luxury')   svg = await buildSvgLuxury(text, ...p);
+    else                           svg = await buildSvg(text, ...p);
+
+    const png = renderSvg(svg);
     res.set('Content-Type', 'image/png');
-    res.send(Buffer.from(png));
+    res.send(png);
   } catch (e) {
     console.error('Generate error:', e);
     res.status(500).json({ error: e.message });
@@ -403,5 +412,228 @@ async function buildSvg(rawText, photoB64, photoWidth, photoHeight) {
 function escapeXml(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
           .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
+
+// ── Sinematik SVG — foto tam arka plan, koyu overlay, beyaz metin ─────────────
+async function buildSvgCinematic(rawText, photoB64, photoWidth, photoHeight) {
+  const W = 1080, H = 1920;
+  const RED = '#C1272D';
+  const FS = 54, LH = 88, MAX_CH = 22;
+  const CHAR_W = FS * 0.57;
+  const EMOJI_SZ = FS * 1.05;
+  const TEXT_X = 72;
+
+  const paragraphs = rawText.split('\n');
+  const lines = [];
+  for (let p = 0; p < paragraphs.length; p++) {
+    lines.push(...wrapText(paragraphs[p].trim(), MAX_CH));
+    if (p < paragraphs.length - 1) lines.push(null);
+  }
+  const allEmoji = new Set();
+  for (const l of lines) {
+    if (!l) continue;
+    for (const s of segmentLine(l)) if (s.type === 'emoji') allEmoji.add(s.value);
+  }
+  await Promise.all([...allEmoji].map(fetchEmoji));
+
+  const TEXT_H = lines.reduce((a, l) => a + (l === null ? LH * 0.6 : LH), 0);
+  const TEXT_Y  = Math.min(Math.round(H * 0.54), H - TEXT_H - 170);
+
+  let curY = TEXT_Y + FS * 0.85;
+  const els = [];
+  for (const line of lines) {
+    if (line === null) { curY += LH * 0.6; continue; }
+    const segs = segmentLine(line);
+    const hasEmoji = segs.some(s => s.type === 'emoji');
+    if (!hasEmoji) {
+      els.push(`<text x="${TEXT_X}" y="${Math.round(curY)}"
+        font-family="Inter Variable" font-size="${FS}" font-weight="700"
+        fill="#FFFFFF">${escapeXml(line)}</text>`);
+    } else {
+      let x = TEXT_X;
+      for (const seg of segs) {
+        if (seg.type === 'text' && seg.value) {
+          els.push(`<text x="${Math.round(x)}" y="${Math.round(curY)}"
+            font-family="Inter Variable" font-size="${FS}" font-weight="700"
+            fill="#FFFFFF">${escapeXml(seg.value)}</text>`);
+          x += seg.value.length * CHAR_W;
+        } else if (seg.type === 'emoji') {
+          const dataUrl = emojiCache.get(seg.value);
+          if (dataUrl) els.push(`<image x="${Math.round(x)}" y="${Math.round(curY - EMOJI_SZ * 0.82)}"
+            width="${Math.round(EMOJI_SZ)}" height="${Math.round(EMOJI_SZ)}" href="${dataUrl}"/>`);
+          x += EMOJI_SZ + 4;
+        }
+      }
+    }
+    curY += LH;
+  }
+
+  const now = new Date(Date.now() + 3 * 60 * 60 * 1000);
+  const dateStr = `${String(now.getUTCDate()).padStart(2,'0')}.${String(now.getUTCMonth()+1).padStart(2,'0')}.${now.getUTCFullYear()}`;
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"
+     xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <defs>
+    <clipPath id="lc"><circle cx="96" cy="96" r="54"/></clipPath>
+    <linearGradient id="bgG" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#0D1B3E"/>
+      <stop offset="100%" stop-color="#060D1F"/>
+    </linearGradient>
+    <linearGradient id="ovl" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#000" stop-opacity="0.30"/>
+      <stop offset="42%"  stop-color="#000" stop-opacity="0.08"/>
+      <stop offset="60%"  stop-color="#000" stop-opacity="0.58"/>
+      <stop offset="100%" stop-color="#000" stop-opacity="0.92"/>
+    </linearGradient>
+  </defs>
+
+  ${photoB64
+    ? `<image x="0" y="0" width="${W}" height="${H}" href="data:image/jpeg;base64,${photoB64}" preserveAspectRatio="xMidYMid slice"/>`
+    : `<rect width="${W}" height="${H}" fill="url(#bgG)"/>`}
+  <rect width="${W}" height="${H}" fill="url(#ovl)"/>
+
+  <rect x="0" y="0" width="${W}" height="7" fill="${RED}"/>
+
+  <image x="42" y="42" width="108" height="108"
+         href="data:image/jpeg;base64,${LOGO_B64}" clip-path="url(#lc)"/>
+  <circle cx="96" cy="96" r="54" fill="none" stroke="rgba(255,255,255,0.22)" stroke-width="2"/>
+  <text x="172" y="78"
+        font-family="Inter Variable" font-size="38" font-weight="900" fill="#FFFFFF">SELHATTİN KOÇ</text>
+  <text x="172" y="116"
+        font-family="Inter Variable" font-size="23" font-weight="600" fill="${RED}">İNŞAAT TAAHHÜT</text>
+
+  <rect x="${TEXT_X}" y="${TEXT_Y - 38}" width="68" height="4" fill="${RED}" rx="2"/>
+  ${els.join('\n  ')}
+
+  <text x="${W / 2}" y="${H - 44}" text-anchor="middle"
+        font-family="Inter Variable" font-size="21" font-weight="400"
+        fill="rgba(255,255,255,0.48)">${escapeXml(WEBSITE)} • ${dateStr}</text>
+</svg>`;
+}
+
+// ── Lüks SVG — koyu navy, ortalı logo, nokta doku, tam bleed foto ─────────────
+async function buildSvgLuxury(rawText, photoB64, photoWidth, photoHeight) {
+  const W = 1080;
+  const NAVY = '#0B1628';
+  const RED  = '#C1272D';
+  const FS = 50, LH = 82, MAX_CH = 26;
+  const CHAR_W = FS * 0.57;
+  const EMOJI_SZ = FS * 1.05;
+  const TEXT_X = 72;
+
+  const paragraphs = rawText.split('\n');
+  const lines = [];
+  for (let p = 0; p < paragraphs.length; p++) {
+    lines.push(...wrapText(paragraphs[p].trim(), MAX_CH));
+    if (p < paragraphs.length - 1) lines.push(null);
+  }
+  const allEmoji = new Set();
+  for (const l of lines) {
+    if (!l) continue;
+    for (const s of segmentLine(l)) if (s.type === 'emoji') allEmoji.add(s.value);
+  }
+  await Promise.all([...allEmoji].map(fetchEmoji));
+
+  const TEXT_H = lines.reduce((a, l) => a + (l === null ? LH * 0.6 : LH), 0);
+
+  const LOGO_R  = 80;
+  const LOGO_CX = W / 2;
+  const LOGO_CY = 140;
+  const HDR_BOT = LOGO_CY + LOGO_R + 18; // y=238
+  const NAME_Y  = HDR_BOT + 52;          // "SELHATTİN KOÇ"
+  const SUB_Y   = NAME_Y + 42;           // "İNŞAAT TAAHHÜT"
+  const SEP_Y   = SUB_Y + 36;            // kırmızı çizgi
+  const CONTENT_Y = SEP_Y + 68;
+
+  const TEXT_END = CONTENT_Y + TEXT_H;
+
+  let PHOTO_H = 0;
+  if (photoB64) {
+    PHOTO_H = photoWidth && photoHeight
+      ? Math.min(Math.round(W * photoHeight / photoWidth), 820)
+      : 560;
+  }
+  const PHOTO_Y   = photoB64 ? TEXT_END + 60 : 0;
+  const PHOTO_END = photoB64 ? PHOTO_Y + PHOTO_H : TEXT_END;
+
+  const FTR_H = 110;
+  const FTR_Y = Math.max(1920 - FTR_H, PHOTO_END + 44);
+  const H = FTR_Y + FTR_H;
+
+  let curY = CONTENT_Y + FS * 0.85;
+  const els = [];
+  for (const line of lines) {
+    if (line === null) { curY += LH * 0.6; continue; }
+    const segs = segmentLine(line);
+    const hasEmoji = segs.some(s => s.type === 'emoji');
+    if (!hasEmoji) {
+      els.push(`<text x="${TEXT_X}" y="${Math.round(curY)}"
+        font-family="Inter Variable" font-size="${FS}" font-weight="700"
+        fill="#E2EAF4">${escapeXml(line)}</text>`);
+    } else {
+      let x = TEXT_X;
+      for (const seg of segs) {
+        if (seg.type === 'text' && seg.value) {
+          els.push(`<text x="${Math.round(x)}" y="${Math.round(curY)}"
+            font-family="Inter Variable" font-size="${FS}" font-weight="700"
+            fill="#E2EAF4">${escapeXml(seg.value)}</text>`);
+          x += seg.value.length * CHAR_W;
+        } else if (seg.type === 'emoji') {
+          const dataUrl = emojiCache.get(seg.value);
+          if (dataUrl) els.push(`<image x="${Math.round(x)}" y="${Math.round(curY - EMOJI_SZ * 0.82)}"
+            width="${Math.round(EMOJI_SZ)}" height="${Math.round(EMOJI_SZ)}" href="${dataUrl}"/>`);
+          x += EMOJI_SZ + 4;
+        }
+      }
+    }
+    curY += LH;
+  }
+
+  const photoClip = photoB64 ? `<clipPath id="pc"><rect x="0" y="${PHOTO_Y}" width="${W}" height="${PHOTO_H}"/></clipPath>` : '';
+  const photoEl   = photoB64 ? `<image x="0" y="${PHOTO_Y}" width="${W}" height="${PHOTO_H}"
+    href="data:image/jpeg;base64,${photoB64}" clip-path="url(#pc)" preserveAspectRatio="xMidYMid meet"/>` : '';
+
+  const now = new Date(Date.now() + 3 * 60 * 60 * 1000);
+  const dateStr = `${String(now.getUTCDate()).padStart(2,'0')}.${String(now.getUTCMonth()+1).padStart(2,'0')}.${now.getUTCFullYear()}`;
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"
+     xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <defs>
+    <clipPath id="lc"><circle cx="${LOGO_CX}" cy="${LOGO_CY}" r="${LOGO_R}"/></clipPath>
+    ${photoClip}
+    <pattern id="dots" x="0" y="0" width="32" height="32" patternUnits="userSpaceOnUse">
+      <circle cx="16" cy="16" r="1.2" fill="rgba(255,255,255,0.055)"/>
+    </pattern>
+  </defs>
+
+  <rect width="${W}" height="${H}" fill="${NAVY}"/>
+  <rect width="${W}" height="${H}" fill="url(#dots)"/>
+  <rect x="0" y="0" width="${W}" height="${HDR_BOT + 10}" fill="rgba(255,255,255,0.025)"/>
+
+  <image x="${LOGO_CX - LOGO_R}" y="${LOGO_CY - LOGO_R}"
+         width="${LOGO_R * 2}" height="${LOGO_R * 2}"
+         href="data:image/jpeg;base64,${LOGO_B64}" clip-path="url(#lc)"/>
+  <circle cx="${LOGO_CX}" cy="${LOGO_CY}" r="${LOGO_R}"
+          fill="none" stroke="${RED}" stroke-width="3.5"/>
+
+  <text x="${W / 2}" y="${NAME_Y}" text-anchor="middle"
+        font-family="Inter Variable" font-size="46" font-weight="900"
+        letter-spacing="3" fill="#FFFFFF">SELHATTİN KOÇ</text>
+  <text x="${W / 2}" y="${SUB_Y}" text-anchor="middle"
+        font-family="Inter Variable" font-size="26" font-weight="600"
+        letter-spacing="2" fill="${RED}">İNŞAAT TAAHHÜT</text>
+
+  <rect x="200" y="${SEP_Y}" width="${W - 400}" height="2" fill="rgba(255,255,255,0.18)" rx="1"/>
+
+  ${els.join('\n  ')}
+  ${photoEl}
+
+  <rect x="0" y="${FTR_Y}" width="${W}" height="${FTR_H}" fill="rgba(0,0,0,0.25)"/>
+  <text x="${W / 2}" y="${FTR_Y + 62}" text-anchor="middle"
+        font-family="Inter Variable" font-size="23" font-weight="400"
+        fill="rgba(255,255,255,0.45)">${escapeXml(WEBSITE)} • ${dateStr}</text>
+</svg>`;
 }
 
