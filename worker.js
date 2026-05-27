@@ -12,12 +12,7 @@ const STATES = {
   REMINDER_HOURLY: 'reminder_hourly',
   STORY_TEXT: 'story_text',
   STORY_PHOTO: 'story_photo',
-  OS_KONUM:  'os_konum',
-  OS_BASLIK: 'os_baslik',
-  OS_SATIR1: 'os_satir1',
-  OS_SATIR2: 'os_satir2',
-  OS_ONCE:   'os_once',
-  OS_SONRA:  'os_sonra',
+  EXIF_PHOTO: 'exif_photo',
 };
 
 export default {
@@ -41,6 +36,7 @@ export default {
 // ── Webhook ───────────────────────────────────────────────────────────────────
 async function handleWebhook(update, env) {
   try {
+    if (update.callback_query) return handleCallbackQuery(update.callback_query, env);
     if (!update.message) return;
 
     const chatId   = update.message.chat.id;
@@ -53,23 +49,28 @@ async function handleWebhook(update, env) {
     const saved = await env.REMINDERS.get(stateKey);
     if (saved) state = JSON.parse(saved);
 
+    // Global komutlar — state ne olursa olsun çalışır
+    if (text === "/basarili") return handleBasarili(chatId, env);
+    if (text === "/start") {
+      await resetState(chatId, env);
+      return sendStart(chatId, name, env);
+    }
+    if (text === "/exifdegis") {
+      state = { step: STATES.EXIF_PHOTO, chatId };
+      await saveState(chatId, state, env);
+      return send(chatId, "📷 *EXIF Değiştir*\n\nFotoğrafı gönder, gerçekçi kamera bilgileriyle (marka, model, tarih, ISO, enstantane) yeniden paketleyeyim.", env);
+    }
+
     if (state.step === STATES.IDLE) {
-      if (text === "/start")           return send(chatId, startMessage(name), env);
       if (text === "/yardim")          return send(chatId, helpMessage(), env);
       if (text === "/liste")           return handleList(chatId, env);
-      if (text === "/basarili")        return handleBasarili(chatId, env);
       if (text.startsWith("/sil"))     return handleDelete(text, chatId, env);
-      if (text === "/uyandir")             return handleUyandir(chatId, env);
       if (text === "/brifing")             return handleBrifingAktif(chatId, env);
       if (text === "/brifingkapat")        return handleBrifingKapat(chatId, env);
-      if (text === "/oncesonra") {
-        state = { step: STATES.OS_KONUM, chatId };
-        await saveState(chatId, state, env);
-        return send(chatId, "🏗️ *Önce/Sonra Görseli*\n\n📍 Konum girin (örn: `Sivas / Divriği`):", env);
-      }
       if (text === "/story" || text.startsWith("/story")) {
         state = { step: STATES.STORY_TEXT, chatId };
         await saveState(chatId, state, env);
+        warmupImageService(env);
         return send(chatId, "📝 *Story Oluştur*\n\nGörsel üzerine yazılacak metni girin:", env);
       }
 
@@ -98,12 +99,7 @@ async function handleWebhook(update, env) {
       case STATES.REMINDER_HOURLY:   return handleReminderHourly(text, chatId, state, env);
       case STATES.STORY_TEXT:        return handleStoryText(text, chatId, state, env);
       case STATES.STORY_PHOTO:       return handleStoryPhotoStep(text, chatId, state, env, photos);
-      case STATES.OS_KONUM:          return handleOsKonum(text, chatId, state, env);
-      case STATES.OS_BASLIK:         return handleOsBaslik(text, chatId, state, env);
-      case STATES.OS_SATIR1:         return handleOsSatir1(text, chatId, state, env);
-      case STATES.OS_SATIR2:         return handleOsSatir2(text, chatId, state, env);
-      case STATES.OS_ONCE:           return handleOsOnce(text, chatId, state, env, photos);
-      case STATES.OS_SONRA:          return handleOsSonra(text, chatId, state, env, photos);
+      case STATES.EXIF_PHOTO:        return handleExifPhoto(chatId, state, env, photos);
     }
 
     return send(chatId, "⚠️ Beklenmeyen durum. `/start` ile yeniden başlayın.", env);
@@ -113,23 +109,44 @@ async function handleWebhook(update, env) {
 }
 
 // ── Mesajlar ──────────────────────────────────────────────────────────────────
-function startMessage(name) {
-  return `
-🤖 Merhaba *${name}*!
+async function sendStart(chatId, name, env) {
+  const text = `🤖 Merhaba *${name}*!\n\n🏗️ *Selhattin Koç İnşaat Taahhüt Botu*\n\nNe yapmak istersiniz?`;
+  const keyboard = [
+    [
+      { text: "📸 Story", callback_data: "/story" }
+    ],
+    [
+      { text: "⏰ Tek Hatırlatma",   callback_data: "/tekhatirlat"  },
+      { text: "🔁 Aylık Hatırlatma", callback_data: "/herhatirlat"  }
+    ],
+    [
+      { text: "📋 Liste",       callback_data: "/liste"    },
+      { text: "📷 EXIF Değiştir", callback_data: "/exifdegis" }
+    ],
+    [
+      { text: "📅 Brifing Aç",   callback_data: "/brifing"      },
+      { text: "🔕 Brifing Kapat", callback_data: "/brifingkapat" }
+    ]
+  ];
+  return sendWithKeyboard(chatId, text, keyboard, env);
+}
 
-🏗️ *Selhattin Koç İnşaat Taahhüt Botu*
+async function handleCallbackQuery(query, env) {
+  const chatId = query.message.chat.id;
+  const name   = query.from?.first_name || "Kullanıcı";
 
-📋 *Kullanılabilir Komutlar:*
-/yardim - Yardım mesajı
-/tekhatirlat - Tek seferlik hatırlatma oluştur
-/herhatirlat - Her ay tekrar eden hatırlatma oluştur
-/liste - Tüm hatırlatmalarını listele
-/brifing - Günlük sabah brifingi aç
-/brifingkapat - Günlük sabah brifingi kapat
-/uyandir - Görsel servisini uyandır
-/story - Instagram hikaye görseli oluştur (adım adım)
-/oncesonra - Önce/Sonra görseli oluştur
-  `.trim();
+  // Telegram spinner'ını kapat
+  fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/answerCallbackQuery`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ callback_query_id: query.id })
+  }).catch(() => {});
+
+  // Butona basıldığında mevcut akışı sıfırla, komutu çalıştır
+  await resetState(chatId, env);
+  return handleWebhook({
+    message: { chat: { id: chatId }, from: query.from, text: query.data, photo: null }
+  }, env);
 }
 
 function helpMessage() {
@@ -143,21 +160,15 @@ function helpMessage() {
 📌 */brifing* — Günlük sabah brifingi aç (her gün 08:00)
 📌 */brifingkapat* — Günlük sabah brifingi kapat
 
-📌 */uyandir* — Görsel servisini uyandır (ilk kullanımdan önce)
-
 📌 */story* — Instagram hikaye görseli oluştur
 1\. `/story` yaz
 2\. Metni gir
 3\. Fotoğraf gönder veya *Hayır* yaz
 4\. Görsel hazır ✅
 
-📌 */oncesonra* — Önce/Sonra görseli oluştur
-1\. `/oncesonra` yaz
-2\. Konum gir (örn: Sivas / Divriği)
-3\. Başlık gir (örn: DÖNÜŞTÜRÜYORUZ\.)
-4\. Alt satır 1 ve 2'yi gir
-5\. ÖNCE fotoğrafı gönder
-6\. SONRA fotoğrafı gönder → görsel hazır ✅
+📌 */exifdegis* — Fotoğrafın EXIF bilgilerini gerçekçi kamera verisiyle değiştir
+1\. `/exifdegis` yaz
+2\. Fotoğrafı gönder → EXIF güncellenmiş fotoğraf hazır ✅
   `.trim();
 }
 
@@ -327,22 +338,9 @@ async function sendDailyBrifing(env) {
   }
 }
 
-// ── Uyandir ───────────────────────────────────────────────────────────────────
-async function handleUyandir(chatId, env) {
-  await send(chatId, "⏳ Servisler uyandırılıyor, lütfen bekleyin...", env);
-  try {
-    const start = Date.now();
-    const res = await fetch(`${env.IMAGE_SERVICE_URL}/`, { method: 'GET' });
-    const ms  = Date.now() - start;
-    if (res.ok) {
-      return send(chatId, `✅ Image service aktif! (${ms}ms)\n\nArtık /story komutunu kullanabilirsiniz.`, env);
-    } else {
-      return send(chatId, `⚠️ Image service yanıt verdi ama hata kodu döndü: ${res.status}`, env);
-    }
-  } catch (err) {
-    console.error("❌ UYANDIR ERROR:", err);
-    return send(chatId, "❌ Image service'e ulaşılamadı. Render kontrol panelini kontrol edin.", env);
-  }
+// ── Servis ısıtma ─────────────────────────────────────────────────────────────
+function warmupImageService(env) {
+  fetch(`${env.IMAGE_SERVICE_URL}/`).catch(() => {});
 }
 
 // ── Story ─────────────────────────────────────────────────────────────────────
@@ -351,6 +349,8 @@ async function handleUyandir(chatId, env) {
 async function handleStoryText(text, chatId, state, env) {
   if (!text || text.length < 2)
     return send(chatId, "❌ Metin çok kısa, tekrar girin:", env);
+  if (text.length > 500)
+    return send(chatId, `❌ Metin çok uzun (${text.length}/500 karakter). Lütfen kısaltın:`, env);
   state.storyText = text;
   state.step = STATES.STORY_PHOTO;
   await saveState(chatId, state, env);
@@ -408,6 +408,47 @@ async function generateAndSendStory(storyText, chatId, env, photos) {
   }
 }
 
+// ── EXIF Değiştir ─────────────────────────────────────────────────────────────
+async function handleExifPhoto(chatId, state, env, photos) {
+  if (!photos || photos.length === 0)
+    return send(chatId, "📸 Lütfen bir fotoğraf gönderin (dosya olarak değil, fotoğraf olarak).", env);
+
+  try {
+    const largest  = photos[photos.length - 1];
+    const fileRes  = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/getFile?file_id=${largest.file_id}`);
+    const fileData = await fileRes.json();
+    const photoRes = await fetch(`https://api.telegram.org/file/bot${env.BOT_TOKEN}/${fileData.result.file_path}`);
+    const imageB64 = bufToB64(await photoRes.arrayBuffer());
+
+    const imgRes = await fetch(`${env.IMAGE_SERVICE_URL}/exif`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-secret': env.IMAGE_SECRET || '' },
+      body: JSON.stringify({ imageB64 }),
+    });
+    if (!imgRes.ok) throw new Error(`Image service: ${imgRes.status}`);
+
+    const cameraName = imgRes.headers.get('X-Camera') || 'Kamera';
+    const jpegBuf    = await imgRes.arrayBuffer();
+
+    const form = new FormData();
+    form.append('chat_id',  String(chatId));
+    form.append('document', new Blob([jpegBuf], { type: 'image/jpeg' }), 'photo_exif.jpg');
+    form.append('caption',  `✅ *EXIF güncellendi!*\n📷 ${cameraName}`);
+    form.append('parse_mode', 'Markdown');
+
+    const tgRes = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/sendDocument`, { method: 'POST', body: form });
+    if (!tgRes.ok) {
+      console.error("❌ sendDocument EXIF error:", await tgRes.text());
+      await send(chatId, "⚠️ Fotoğraf gönderilemedi. Tekrar deneyin.", env);
+    }
+  } catch (err) {
+    console.error("❌ EXIF ERROR:", err);
+    await send(chatId, "⚠️ EXIF güncellenirken hata oluştu.", env);
+  } finally {
+    await resetState(chatId, env);
+  }
+}
+
 function bufToB64(buf) {
   const bytes = new Uint8Array(buf);
   let s = '';
@@ -415,92 +456,6 @@ function bufToB64(buf) {
   for (let i = 0; i < bytes.length; i += chunk)
     s += String.fromCharCode(...bytes.subarray(i, i + chunk));
   return btoa(s);
-}
-
-// ── Önce/Sonra akışı ─────────────────────────────────────────────────────────
-
-async function handleOsKonum(text, chatId, state, env) {
-  if (!text || text.length < 2) return send(chatId, "❌ Konum çok kısa. Tekrar girin:", env);
-  state.osKonum = text;
-  state.step = STATES.OS_BASLIK;
-  await saveState(chatId, state, env);
-  return send(chatId, `✅ Konum: *${text}*\n\n📝 Başlık yazısını girin (örn: \`DÖNÜŞTÜRÜYORUZ.\`):`, env);
-}
-
-async function handleOsBaslik(text, chatId, state, env) {
-  if (!text || text.length < 2) return send(chatId, "❌ Başlık çok kısa. Tekrar girin:", env);
-  state.osBaslik = text;
-  state.step = STATES.OS_SATIR1;
-  await saveState(chatId, state, env);
-  return send(chatId, `✅ Başlık: *${text}*\n\n✏️ Alt satır 1 girin (örn: \`Yapısal güçlendirme\`):`, env);
-}
-
-async function handleOsSatir1(text, chatId, state, env) {
-  if (!text || text.length < 2) return send(chatId, "❌ Satır çok kısa. Tekrar girin:", env);
-  state.osSatir1 = text;
-  state.step = STATES.OS_SATIR2;
-  await saveState(chatId, state, env);
-  return send(chatId, `✅ Alt satır 1: *${text}*\n\n✏️ Alt satır 2 girin (örn: \`Cephe ve yüzey iyileştirmeleri\`):`, env);
-}
-
-async function handleOsSatir2(text, chatId, state, env) {
-  if (!text || text.length < 2) return send(chatId, "❌ Satır çok kısa. Tekrar girin:", env);
-  state.osSatir2 = text;
-  state.step = STATES.OS_ONCE;
-  await saveState(chatId, state, env);
-  return send(chatId, `✅ Alt satır 2: *${text}*\n\n📸 *ÖNCE* fotoğrafını gönderin:`, env);
-}
-
-async function handleOsOnce(text, chatId, state, env, photos) {
-  if (!photos || photos.length === 0) return send(chatId, "📸 Lütfen ÖNCE fotoğrafını gönderin:", env);
-  state.osOnceFileId = photos[photos.length - 1].file_id;
-  state.step = STATES.OS_SONRA;
-  await saveState(chatId, state, env);
-  return send(chatId, "✅ ÖNCE fotoğrafı alındı.\n\n📸 *SONRA* fotoğrafını gönderin:", env);
-}
-
-async function handleOsSonra(text, chatId, state, env, photos) {
-  if (!photos || photos.length === 0) return send(chatId, "📸 Lütfen SONRA fotoğrafını gönderin:", env);
-  const sonraFileId = photos[photos.length - 1].file_id;
-  const { osKonum, osBaslik, osSatir1, osSatir2, osOnceFileId } = state;
-  await resetState(chatId, env);
-  await generateAndSendOncesonra(osKonum, osBaslik, osSatir1, osSatir2, osOnceFileId, sonraFileId, chatId, env);
-}
-
-async function generateAndSendOncesonra(konum, baslik, satir1, satir2, onceFileId, sonraFileId, chatId, env) {
-  await send(chatId, "⏳ Görsel oluşturuluyor...", env);
-  try {
-    const fetchPhoto = async (fileId) => {
-      const fileRes  = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/getFile?file_id=${fileId}`);
-      const fileData = await fileRes.json();
-      const photoRes = await fetch(`https://api.telegram.org/file/bot${env.BOT_TOKEN}/${fileData.result.file_path}`);
-      return bufToB64(await photoRes.arrayBuffer());
-    };
-
-    const [onceB64, sonraB64] = await Promise.all([fetchPhoto(onceFileId), fetchPhoto(sonraFileId)]);
-
-    const imgRes = await fetch(`${env.IMAGE_SERVICE_URL}/oncesonra`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-secret': env.IMAGE_SECRET },
-      body: JSON.stringify({ konum, baslik, satir1, satir2, onceB64, sonraB64 })
-    });
-    if (!imgRes.ok) throw new Error(`Image service: ${imgRes.status}`);
-
-    const pngBuf = await imgRes.arrayBuffer();
-    const form   = new FormData();
-    form.append('chat_id',  String(chatId));
-    form.append('document', new Blob([pngBuf], { type: 'image/png' }), 'oncesonra.png');
-    form.append('caption',  "✅ Önce/Sonra görseliniz hazır!");
-
-    const tgRes = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/sendDocument`, { method: 'POST', body: form });
-    if (!tgRes.ok) {
-      console.error("❌ sendDocument error:", await tgRes.text());
-      await send(chatId, "⚠️ Görsel gönderilemedi. Tekrar deneyin.", env);
-    }
-  } catch (err) {
-    console.error("❌ ONCESONRA ERROR:", err);
-    await send(chatId, "⚠️ Görsel oluşturulurken hata oluştu.", env);
-  }
 }
 
 // ── Tek seferlik hatırlatma akışı ─────────────────────────────────────────────
@@ -689,6 +644,25 @@ async function send(chatId, text, env) {
     if (!res.ok) console.error("❌ Telegram API Error:", await res.text());
   } catch (e) {
     console.error("❌ SEND ERROR:", e);
+  }
+  return new Response("ok");
+}
+
+async function sendWithKeyboard(chatId, text, keyboard, env) {
+  try {
+    const res = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+        parse_mode: "Markdown",
+        reply_markup: { inline_keyboard: keyboard }
+      })
+    });
+    if (!res.ok) console.error("❌ Telegram API Error:", await res.text());
+  } catch (e) {
+    console.error("❌ SENDKBD ERROR:", e);
   }
   return new Response("ok");
 }
