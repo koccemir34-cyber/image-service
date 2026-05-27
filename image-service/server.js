@@ -245,31 +245,27 @@ function wrapText(text, max) {
 
 // ── SVG ─────────────────────────────────────────────────────────────────────
 async function buildSvg(rawText, photoB64, photoWidth, photoHeight) {
-  const W      = 1080;
-  const CARD_W = 1040;
-  const CARD_X = (W - CARD_W) / 2;   // 20px kenar boşluğu
-  const RX     = 22;
-  const ACC_W  = 10;                  // sol kırmızı accent bar genişliği
-  const PAD    = 58;                  // iç padding (accent bar sonrası)
-  const TEXT_X = CARD_X + ACC_W + PAD;
-  const TEXT_W = CARD_W - ACC_W - PAD * 2;
+  const W = 1080;
 
-  const AVA_R  = 62;
-  const avaCX  = TEXT_X + AVA_R;
-  const FS     = 54;
-  const LH     = 88;
-  const MAX_CH = 23;
-  const CHAR_W = FS * 0.57;
+  // Brand
+  const NAVY = '#0D1B3E';
+  const RED  = '#C1272D';
+
+  // Header band
+  const HDR_H   = 230;
+  const LOGO_R  = 70;
+  const LOGO_CX = 110;
+  const LOGO_CY = HDR_H / 2;
+
+  // Content
+  const PAD      = 72;
+  const TEXT_X   = PAD;
+  const TEXT_W   = W - PAD * 2;
+  const FS       = 50;
+  const LH       = 82;
+  const MAX_CH   = 26;
+  const CHAR_W   = FS * 0.57;
   const EMOJI_SZ = FS * 1.05;
-
-  // Fotoğraf boyutları — gerçek en/boy oranını koru, max 900px
-  const PHOTO_H   = photoB64
-    ? (photoWidth && photoHeight
-        ? Math.min(Math.round(TEXT_W * photoHeight / photoWidth), 900)
-        : 460)
-    : 0;
-  const PHOTO_GAP = photoB64 ? 44 : 0;
-  const PHOTO_BOT = photoB64 ? 24 : 0;
 
   // Metin satırları
   const paragraphs = rawText.split('\n');
@@ -286,39 +282,32 @@ async function buildSvg(rawText, photoB64, photoWidth, photoHeight) {
   }
   await Promise.all([...allEmoji].map(fetchEmoji));
 
-  // Boyutlar
-  const PROF_H    = AVA_R * 2;
-  const SEP_GAP   = 36;
-  const SEP_H     = 2;
-  const TEXT_GAP  = 50;
-  const TEXT_H    = lines.reduce((a, l) => a + (l === null ? LH * 0.6 : LH), 0);
-  const FOOT_AREA = 90;   // footer bölge yüksekliği (gri arka plan)
-  const FOOT_PAD  = 28;
+  const TEXT_H = lines.reduce((a, l) => a + (l === null ? LH * 0.6 : LH), 0);
 
-  const CARD_H = Math.max(
-    800,
-    PROF_H + SEP_GAP + SEP_H + TEXT_GAP +
-    TEXT_H + PHOTO_GAP + PHOTO_H + PHOTO_BOT +
-    PAD * 2 + FOOT_AREA
-  );
+  // Fotoğraf boyutları — gerçek en/boy oranını koru, max 780px
+  const PHOTO_H = photoB64
+    ? (photoWidth && photoHeight
+        ? Math.min(Math.round(TEXT_W * photoHeight / photoWidth), 780)
+        : 520)
+    : 0;
+  const PHOTO_GAP = photoB64 ? 52 : 0;
 
-  const CARD_Y = 90;
-  const H = Math.max(1920, CARD_Y + CARD_H + 90);
+  // Koordinatlar
+  const CONTENT_Y = HDR_H + 68;
+  const TEXT_END  = CONTENT_Y + TEXT_H;
+  const PHOTO_Y   = TEXT_END + PHOTO_GAP;
+  const PHOTO_END = photoB64 ? PHOTO_Y + PHOTO_H : TEXT_END;
 
-  const avaCY   = CARD_Y + PAD + AVA_R;
-  const nameX   = avaCX + AVA_R + 22;
-  const nameY   = avaCY - 14;
-  const subY    = avaCY + 20;
-  const handleY = avaCY + 52;
-  const LOGO_SZ = 66;
-  const logoX   = CARD_X + CARD_W - PAD - LOGO_SZ;
-  const logoY   = CARD_Y + PAD + (AVA_R - LOGO_SZ / 2);
-  const sepY    = CARD_Y + PAD + PROF_H + SEP_GAP;
+  const FTR_H = 155;
+  const FTR_Y = Math.max(1920 - FTR_H, PHOTO_END + 68);
+  const H     = FTR_Y + FTR_H;
 
-  const footAreaY = CARD_Y + CARD_H - FOOT_AREA;
+  // Sol accent bar: header altından footer üstüne kadar
+  const ACC_BAR_Y = HDR_H;
+  const ACC_BAR_H = FTR_Y - HDR_H;
 
   // Metin elementleri
-  let curY = sepY + SEP_H + TEXT_GAP + FS * 0.82;
+  let curY = CONTENT_Y + FS * 0.85;
   const els = [];
 
   for (const line of lines) {
@@ -331,7 +320,7 @@ async function buildSvg(rawText, photoB64, photoWidth, photoHeight) {
       els.push(
         `<text x="${TEXT_X}" y="${Math.round(curY)}"
           font-family="Inter Variable" font-size="${FS}" font-weight="700"
-          fill="#0F172A">${escapeXml(line)}</text>`
+          fill="${NAVY}">${escapeXml(line)}</text>`
       );
     } else {
       let x = TEXT_X;
@@ -340,7 +329,7 @@ async function buildSvg(rawText, photoB64, photoWidth, photoHeight) {
           els.push(
             `<text x="${Math.round(x)}" y="${Math.round(curY)}"
               font-family="Inter Variable" font-size="${FS}" font-weight="700"
-              fill="#0F172A">${escapeXml(seg.value)}</text>`
+              fill="${NAVY}">${escapeXml(seg.value)}</text>`
           );
           x += seg.value.length * CHAR_W;
         } else if (seg.type === 'emoji') {
@@ -360,129 +349,87 @@ async function buildSvg(rawText, photoB64, photoWidth, photoHeight) {
   }
 
   // Fotoğraf
-  const textEndY = sepY + SEP_H + TEXT_GAP + TEXT_H;
-  const photoY   = textEndY + PHOTO_GAP;
-
   const photoClip = photoB64 ? `
     <clipPath id="photoClip">
-      <rect x="${TEXT_X}" y="${Math.round(photoY)}"
-            width="${TEXT_W}" height="${PHOTO_H}" rx="14" ry="14"/>
+      <rect x="${TEXT_X}" y="${Math.round(PHOTO_Y)}"
+            width="${TEXT_W}" height="${PHOTO_H}" rx="16" ry="16"/>
     </clipPath>` : '';
 
   const photoImg = photoB64 ? `
-  <image x="${TEXT_X}" y="${Math.round(photoY)}"
+  <image x="${TEXT_X}" y="${Math.round(PHOTO_Y)}"
          width="${TEXT_W}" height="${PHOTO_H}"
          href="data:image/jpeg;base64,${photoB64}"
-         clip-path="url(#photoClip)"
+         clip-path="url(#photoClip)" filter="url(#pShadow)"
          preserveAspectRatio="xMidYMid slice"/>` : '';
 
-  const now = new Date();
-  const dateStr = `${now.getDate().toString().padStart(2,'0')}.${(now.getMonth()+1).toString().padStart(2,'0')}.${now.getFullYear()}`;
+  // TR saatiyle tarih
+  const now     = new Date(Date.now() + 3 * 60 * 60 * 1000);
+  const dateStr = `${String(now.getUTCDate()).padStart(2,'0')}.${String(now.getUTCMonth()+1).padStart(2,'0')}.${now.getUTCFullYear()}`;
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"
      xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
   <defs>
-    <clipPath id="cardClip">
-      <rect x="${CARD_X}" y="${CARD_Y}" width="${CARD_W}" height="${CARD_H}"
-            rx="${RX}" ry="${RX}"/>
-    </clipPath>
-    <clipPath id="ava">
-      <circle cx="${avaCX}" cy="${avaCY}" r="${AVA_R}"/>
+    <clipPath id="logoClip">
+      <circle cx="${LOGO_CX}" cy="${LOGO_CY}" r="${LOGO_R}"/>
     </clipPath>
     ${photoClip}
 
-    <!-- Arka plan -->
-    <linearGradient id="bg" x1="0" y1="0" x2="0.2" y2="1">
-      <stop offset="0%"   stop-color="#0D1117"/>
-      <stop offset="100%" stop-color="#131820"/>
+    <linearGradient id="hdrGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="${NAVY}"/>
+      <stop offset="100%" stop-color="#162444"/>
     </linearGradient>
 
-    <!-- Sol accent bar (dikey) -->
-    <linearGradient id="accentV" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%"   stop-color="#EF4444"/>
-      <stop offset="100%" stop-color="#991B1B"/>
-    </linearGradient>
-
-    <!-- Üst accent şerit (yatay) -->
-    <linearGradient id="accentH" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%"   stop-color="#B91C1C"/>
-      <stop offset="100%" stop-color="#EF4444"/>
-    </linearGradient>
-
-    <!-- Ayırıcı çizgi -->
-    <linearGradient id="sep" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%"   stop-color="#E2E8F0"/>
-      <stop offset="50%"  stop-color="#CBD5E1"/>
-      <stop offset="100%" stop-color="#E2E8F0"/>
-    </linearGradient>
-
-    <!-- Kart gölgesi -->
-    <filter id="shadow" x="-5%" y="-3%" width="120%" height="116%">
-      <feDropShadow dx="0" dy="10" stdDeviation="22"
-                    flood-color="#000000" flood-opacity="0.40"/>
+    <filter id="pShadow" x="-4%" y="-3%" width="112%" height="116%">
+      <feDropShadow dx="0" dy="6" stdDeviation="14"
+                    flood-color="#000000" flood-opacity="0.16"/>
     </filter>
   </defs>
 
-  <!-- Arka plan -->
-  <rect width="${W}" height="${H}" fill="url(#bg)"/>
+  <!-- Beyaz arka plan -->
+  <rect width="${W}" height="${H}" fill="#FFFFFF"/>
 
-  <!-- Kart zemini + gölge -->
-  <rect x="${CARD_X}" y="${CARD_Y}" width="${CARD_W}" height="${CARD_H}"
-        rx="${RX}" ry="${RX}" fill="#FFFFFF" filter="url(#shadow)"/>
+  <!-- Header band -->
+  <rect x="0" y="0" width="${W}" height="${HDR_H}" fill="url(#hdrGrad)"/>
+  <!-- Header alt kırmızı stripe -->
+  <rect x="0" y="${HDR_H - 7}" width="${W}" height="7" fill="${RED}"/>
 
-  <!-- Footer gri arka plan (card içinde, alta yapışık) -->
-  <rect x="${CARD_X}" y="${footAreaY}" width="${CARD_W}" height="${FOOT_AREA}"
-        fill="#F1F5F9" clip-path="url(#cardClip)"/>
+  <!-- Logo dairesi -->
+  <image x="${LOGO_CX - LOGO_R}" y="${LOGO_CY - LOGO_R}"
+         width="${LOGO_R * 2}" height="${LOGO_R * 2}"
+         href="data:image/jpeg;base64,${LOGO_B64}" clip-path="url(#logoClip)"/>
+  <circle cx="${LOGO_CX}" cy="${LOGO_CY}" r="${LOGO_R}"
+          fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="2.5"/>
 
-  <!-- Sol kırmızı accent bar -->
-  <rect x="${CARD_X}" y="${CARD_Y}" width="${ACC_W}" height="${CARD_H}"
-        fill="url(#accentV)" clip-path="url(#cardClip)"/>
+  <!-- Şirket bilgisi -->
+  <text x="206" y="${LOGO_CY - 24}"
+        font-family="Inter Variable" font-size="42" font-weight="900"
+        fill="#FFFFFF">SELHATTİN KOÇ</text>
+  <text x="206" y="${LOGO_CY + 18}"
+        font-family="Inter Variable" font-size="25" font-weight="700"
+        fill="${RED}">İNŞAAT TAAHHÜT</text>
+  <text x="206" y="${LOGO_CY + 52}"
+        font-family="Inter Variable" font-size="20" font-weight="400"
+        fill="rgba(255,255,255,0.45)">@selhattinkocinsaat</text>
 
-  <!-- Üst kırmızı accent şerit -->
-  <rect x="${CARD_X}" y="${CARD_Y}" width="${CARD_W}" height="8"
-        fill="url(#accentH)" clip-path="url(#cardClip)"/>
-
-  <!-- Avatar -->
-  <image x="${avaCX - AVA_R}" y="${avaCY - AVA_R}"
-         width="${AVA_R * 2}" height="${AVA_R * 2}"
-         href="data:image/jpeg;base64,${LOGO_B64}" clip-path="url(#ava)"/>
-  <circle cx="${avaCX}" cy="${avaCY}" r="${AVA_R}"
-          fill="none" stroke="#E2E8F0" stroke-width="2.5"/>
-
-  <!-- Şirket adı (hiyerarşi: büyük isim → kırmızı sektör → gri handle) -->
-  <text x="${nameX}" y="${nameY}"
-        font-family="Inter Variable" font-size="28" font-weight="900"
-        fill="#0F172A">SELHATTİN KOÇ</text>
-  <text x="${nameX}" y="${subY}"
-        font-family="Inter Variable" font-size="22" font-weight="700"
-        fill="#DC2626">İNŞAAT TAAHHÜT</text>
-  <text x="${nameX}" y="${handleY}"
-        font-family="Inter Variable" font-size="19" font-weight="400"
-        fill="#94A3B8">@selhattinkocinsaat</text>
-
-  <!-- Sağ logo -->
-  <image x="${logoX}" y="${logoY}" width="${LOGO_SZ}" height="${LOGO_SZ}"
-         href="data:image/jpeg;base64,${LOGO_B64}"/>
-
-  <!-- Ayırıcı -->
-  <line x1="${TEXT_X}" y1="${sepY}"
-        x2="${CARD_X + CARD_W - PAD}" y2="${sepY}"
-        stroke="url(#sep)" stroke-width="${SEP_H}"/>
+  <!-- Sol kırmızı accent bar (içerik boyunca) -->
+  <rect x="44" y="${ACC_BAR_Y}" width="5" height="${ACC_BAR_H}" fill="${RED}" rx="2.5"/>
 
   <!-- İçerik metni -->
   ${els.join('\n  ')}
 
-  <!-- Kullanıcı fotoğrafı (varsa) -->
+  <!-- Fotoğraf -->
   ${photoImg}
 
-  <!-- Footer içeriği -->
-  <text x="${TEXT_X}" y="${footAreaY + FOOT_PAD + 22}"
-        font-family="Inter Variable" font-size="22" font-weight="600"
-        fill="#1E293B">${escapeXml(WEBSITE)}</text>
-  <text x="${CARD_X + CARD_W - PAD}" y="${footAreaY + FOOT_PAD + 22}"
-        font-family="Inter Variable" font-size="18" font-weight="400"
-        fill="#94A3B8" text-anchor="end">${dateStr}</text>
+  <!-- Footer -->
+  <rect x="0" y="${FTR_Y}" width="${W}" height="${FTR_H}" fill="#F1F5F9"/>
+  <rect x="0" y="${FTR_Y}" width="${W}" height="4" fill="${RED}"/>
+  <text x="${W / 2}" y="${FTR_Y + 66}" text-anchor="middle"
+        font-family="Inter Variable" font-size="26" font-weight="600"
+        fill="#334155">${escapeXml(WEBSITE)}</text>
+  <text x="${W / 2}" y="${FTR_Y + 108}" text-anchor="middle"
+        font-family="Inter Variable" font-size="20" font-weight="400"
+        fill="#94A3B8">${dateStr}</text>
 </svg>`;
 }
 
