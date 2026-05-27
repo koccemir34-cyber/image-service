@@ -6,10 +6,29 @@ import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const fontBuffer = readFileSync(join(__dirname, 'inter.ttf'));
-const LOGO_B64   = readFileSync(join(__dirname, 'logo_b64.txt'), 'utf8').trim();
-const SECRET     = process.env.IMAGE_SECRET || '';
-const WEBSITE    = 'selhattinkoc.web.app';
+const fontBuffer      = readFileSync(join(__dirname, 'inter.ttf'));
+const LOGO_SK_B64     = readFileSync(join(__dirname, 'logo_b64.txt'), 'utf8').trim();
+const LOGO_REMAZ_B64  = readFileSync(join(__dirname, 'logo_remaz_b64.txt'), 'utf8').trim();
+const SECRET          = process.env.IMAGE_SECRET || '';
+
+const BRANDS = {
+  selhattin: {
+    logoB64:  LOGO_SK_B64,
+    logoMime: 'image/jpeg',
+    line1:    'SELHATTİN KOÇ',
+    line2:    'İNŞAAT TAAHHÜT',
+    handle:   '@selhattinkocinsaat',
+    website:  'selhattinkoc.web.app',
+  },
+  remaz: {
+    logoB64:  LOGO_REMAZ_B64,
+    logoMime: 'image/png',
+    line1:    'REMAZ İNŞAAT',
+    line2:    'TAAHHÜT',
+    handle:   '@remazinsaat',
+    website:  'remazinsaat.web.app',
+  },
+};
 
 const emojiCache = new Map();
 
@@ -22,12 +41,14 @@ app.post('/generate', async (req, res) => {
   if (SECRET && req.headers['x-secret'] !== SECRET)
     return res.status(401).json({ error: 'unauthorized' });
 
-  const { text, photoB64, photoWidth, photoHeight } = req.body;
+  const { text, photoB64, photoWidth, photoHeight, brand } = req.body;
   if (!text) return res.status(400).json({ error: 'text required' });
   if (text.length > 600) return res.status(400).json({ error: 'text too long' });
 
+  const brandCfg = BRANDS[brand] || BRANDS.selhattin;
+
   try {
-    const svg = await buildSvg(text, photoB64 || null, photoWidth || null, photoHeight || null);
+    const svg = await buildSvg(text, photoB64 || null, photoWidth || null, photoHeight || null, brandCfg);
     const resvg = new Resvg(svg, {
       font: {
         loadSystemFonts: false,
@@ -217,7 +238,8 @@ function wrapText(text, max) {
 }
 
 // ── SVG ─────────────────────────────────────────────────────────────────────
-async function buildSvg(rawText, photoB64, photoWidth, photoHeight) {
+async function buildSvg(rawText, photoB64, photoWidth, photoHeight, brand) {
+  brand = brand || BRANDS.selhattin;
   const W = 1080;
 
   // Brand
@@ -366,20 +388,20 @@ async function buildSvg(rawText, photoB64, photoWidth, photoHeight) {
   <!-- Logo dairesi -->
   <image x="${LOGO_CX - LOGO_R}" y="${LOGO_CY - LOGO_R}"
          width="${LOGO_R * 2}" height="${LOGO_R * 2}"
-         href="data:image/jpeg;base64,${LOGO_B64}" clip-path="url(#logoClip)"/>
+         href="data:${brand.logoMime};base64,${brand.logoB64}" clip-path="url(#logoClip)"/>
   <circle cx="${LOGO_CX}" cy="${LOGO_CY}" r="${LOGO_R}"
           fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="2.5"/>
 
   <!-- Şirket bilgisi -->
   <text x="206" y="${LOGO_CY - 24}"
         font-family="Inter Variable" font-size="42" font-weight="900"
-        fill="#FFFFFF">SELHATTİN KOÇ</text>
+        fill="#FFFFFF">${escapeXml(brand.line1)}</text>
   <text x="206" y="${LOGO_CY + 18}"
         font-family="Inter Variable" font-size="25" font-weight="700"
-        fill="${RED}">İNŞAAT TAAHHÜT</text>
+        fill="${RED}">${escapeXml(brand.line2)}</text>
   <text x="206" y="${LOGO_CY + 52}"
         font-family="Inter Variable" font-size="20" font-weight="400"
-        fill="rgba(255,255,255,0.45)">@selhattinkocinsaat</text>
+        fill="rgba(255,255,255,0.45)">${escapeXml(brand.handle)}</text>
 
 
   <!-- İçerik metni -->
@@ -393,7 +415,7 @@ async function buildSvg(rawText, photoB64, photoWidth, photoHeight) {
   <rect x="0" y="${FTR_Y}" width="${W}" height="4" fill="${RED}"/>
   <text x="${W / 2}" y="${FTR_Y + 66}" text-anchor="middle"
         font-family="Inter Variable" font-size="26" font-weight="600"
-        fill="#334155">${escapeXml(WEBSITE)}</text>
+        fill="#334155">${escapeXml(brand.website)}</text>
   <text x="${W / 2}" y="${FTR_Y + 108}" text-anchor="middle"
         font-family="Inter Variable" font-size="20" font-weight="400"
         fill="#94A3B8">${dateStr}</text>
