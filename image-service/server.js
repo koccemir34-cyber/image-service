@@ -298,7 +298,6 @@ async function buildSvg(rawText, photoB64, photoWidth, photoHeight, brand, beta 
   const H     = FTR_Y + FTR_H;
 
   // Metin elementleri
-  const CX   = W / 2;
   let curY = CONTENT_Y + FS * 0.85;
   const els = [];
 
@@ -310,18 +309,12 @@ async function buildSvg(rawText, photoB64, photoWidth, photoHeight, brand, beta 
 
     if (!hasEmoji) {
       els.push(
-        `<text x="${CX}" y="${Math.round(curY)}" text-anchor="middle"
+        `<text x="${TEXT_X}" y="${Math.round(curY)}"
           font-family="Inter Variable" font-size="${FS}" font-weight="700"
           fill="${NAVY}">${escapeXml(line)}</text>`
       );
     } else {
-      // Toplam satır genişliğini hesapla → ortalamak için
-      let lineW = 0;
-      for (const seg of segs) {
-        if (seg.type === 'text' && seg.value) lineW += seg.value.length * CHAR_W;
-        else if (seg.type === 'emoji')        lineW += EMOJI_SZ + 4;
-      }
-      let x = CX - lineW / 2;
+      let x = TEXT_X;
       for (const seg of segs) {
         if (seg.type === 'text' && seg.value) {
           els.push(
