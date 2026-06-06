@@ -50,14 +50,14 @@ app.post('/generate', async (req, res) => {
   if (SECRET && req.headers['x-secret'] !== SECRET)
     return res.status(401).json({ error: 'unauthorized' });
 
-  const { text, photoB64, photoWidth, photoHeight, brand } = req.body;
+  const { text, photoB64, photoWidth, photoHeight, brand, showEngagement } = req.body;
   if (!text) return res.status(400).json({ error: 'text required' });
   if (text.length > 600) return res.status(400).json({ error: 'text too long' });
 
   const brandCfg = BRANDS[brand] || BRANDS.selhattin;
 
   try {
-    const svg = await buildXPostSvg(text, photoB64 || null, photoWidth || null, photoHeight || null, brandCfg);
+    const svg = await buildXPostSvg(text, photoB64 || null, photoWidth || null, photoHeight || null, brandCfg, showEngagement !== false);
     const resvg = new Resvg(svg, {
       font: {
         loadSystemFonts: false,
@@ -245,7 +245,7 @@ function wrapText(text, max) {
 }
 
 // ── X-Post SVG ───────────────────────────────────────────────────────────────
-async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) {
+async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand, showEngagement = true) {
   const W = 1080;
   const BG = '#1c1c1e';
   const CARD_W = 900;
@@ -336,10 +336,10 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
   const photoY      = hasPhoto ? textEndY + photoGap : 0;
   const photoEndY   = hasPhoto ? photoY + actualPhotoH : textEndY;
 
-  const dateY       = photoEndY + 20;
+  const dateY       = photoEndY + 48;
   const divY        = dateY + 40;
-  const engY        = divY + 24;
-  const cardBottomY = engY + ENG_ICON_SZ + 40;
+  const engY        = showEngagement ? divY + 24 : 0;
+  const cardBottomY = showEngagement ? engY + ENG_ICON_SZ + 40 : divY + 24;
 
   // Kart boyunu hesapla
   const cardH = cardBottomY - cardY + 20;
@@ -430,9 +430,9 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
           rx="${PHOTO_CLIP_R}" ry="${PHOTO_CLIP_R}" fill="none" stroke="${DIVIDER_CLR}" stroke-width="1"/>` : '';
 
   // ── Fake engagement sayıları ──────────────────────────────────────
-  const comments = randInt(5, 80);
-  const retweets = randInt(3, 40);
-  const likes    = randInt(50, 500);
+  const comments = showEngagement ? randInt(5, 80) : 0;
+  const retweets = showEngagement ? randInt(3, 40) : 0;
+  const likes    = showEngagement ? randInt(50, 500) : 0;
   const gapX = (CARD_W - 72 - ENG_ICON_SZ * 4) / 5;
   const engStartX = TEXT_PAD_X;
 
@@ -491,7 +491,7 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
   <line x1="${TEXT_PAD_X}" y1="${Math.round(divY)}" x2="${TEXT_PAD_X + CARD_W - 72}" y2="${Math.round(divY)}"
         stroke="${DIVIDER_CLR}" stroke-width="1.5"/>
 
-  <!-- Engagement Bar -->
+  ${showEngagement ? `<!-- Engagement Bar -->
   <!-- Yorum -->
   <g transform="translate(${engStartX}, ${Math.round(engY)})">
     <svg width="${ENG_ICON_SZ}" height="${ENG_ICON_SZ}" viewBox="0 0 24 24">
@@ -527,7 +527,7 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
     <svg width="${ENG_ICON_SZ}" height="${ENG_ICON_SZ}" viewBox="0 0 24 24">
       <path d="${iconBookmark}" fill="none" stroke="${ENG_CLR}" stroke-width="2"/>
     </svg>
-  </g>
+  </g>` : ''}
 
   <!-- Brand Watermark -->
   <text x="${W / 2}" y="${Math.round(wmY)}" text-anchor="middle"
