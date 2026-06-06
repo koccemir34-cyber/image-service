@@ -5,51 +5,24 @@ import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 
+import { BRANDS } from './utils/brands.js';
+import { authMiddleware } from './utils/auth.js';
+import { escapeXml, randInt } from './utils/svg.js';
+import { fetchEmoji, segmentLine, displayLen, wrapText, getEmojiCache } from './utils/emoji.js';
+import { CAMERA_PROFILES, pickRandomCamera, generateExifData } from './utils/exif.js';
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const fontBuffer      = readFileSync(join(__dirname, 'inter.ttf'));
-const LOGO_SK_B64     = readFileSync(join(__dirname, 'logo_b64.txt'), 'utf8').trim();
-const LOGO_REMAZ_B64  = readFileSync(join(__dirname, 'logo_remaz_b64.txt'), 'utf8').trim();
-const SECRET          = process.env.IMAGE_SECRET || '';
-
-// ── Profile photos (JPEG, square 400x400+) ─────────────────────
-// Yeni: profil foto dosyalari. Varsa kullanilir, yoksa logo kullanilir.
-let PROFILE_SK_B64    = '';
-let PROFILE_REMAZ_B64 = '';
-try { PROFILE_SK_B64    = readFileSync(join(__dirname, 'profile-sk.jpg')).toString('base64'); }    catch (e) { console.warn('⚠️ profile-sk.jpg not found, falling back to logo:', e.message); }
-try { PROFILE_REMAZ_B64 = readFileSync(join(__dirname, 'profile-remaz.jpg')).toString('base64'); }  catch (e) { console.warn('⚠️ profile-remaz.jpg not found, falling back to logo:', e.message); }
-
-const BRANDS = {
-  selhattin: {
-    logoB64:     LOGO_SK_B64,
-    profileB64:  PROFILE_SK_B64 || LOGO_SK_B64,
-    logoMime:    'image/jpeg',
-    name:        'Selhattin Koç',
-    handle:      '@selhattinkocinsaat',
-    watermark:   'SELHATTİN KOÇ İNŞAAT',
-    website:     'selhattinkoc.web.app',
-  },
-  remaz: {
-    logoB64:     LOGO_REMAZ_B64,
-    profileB64:  PROFILE_REMAZ_B64 || LOGO_REMAZ_B64,
-    logoMime:    'image/jpeg',
-    name:        'Remaz İnşaat',
-    handle:      '@remazinsaat',
-    watermark:   'REMAZ İNŞAAT',
-    website:     'remazinsaat.web.app',
-  },
-};
-
-const emojiCache = new Map();
+const fontBuffer = readFileSync(join(__dirname, 'inter.ttf'));
+const SECRET     = process.env.IMAGE_SECRET || '';
 
 const app = express();
 app.use(express.json({ limit: '15mb' }));
 
+const auth = authMiddleware(SECRET);
+
 app.get('/', (_, res) => res.send('Image service active ✅ X-Post Design'));
 
-app.post('/generate', async (req, res) => {
-  if (SECRET && req.headers['x-secret'] !== SECRET)
-    return res.status(401).json({ error: 'unauthorized' });
-
+app.post('/generate', auth, async (req, res) => {
   const { text, photoB64, photoWidth, photoHeight, brand } = req.body;
   if (!text) return res.status(400).json({ error: 'text required' });
   if (text.length > 600) return res.status(400).json({ error: 'text too long' });
@@ -77,20 +50,7 @@ app.post('/generate', async (req, res) => {
 });
 
 // ── EXIF ─────────────────────────────────────────────────────────────────────
-// (unchanged — ayni EXIF kodu)
-const CAMERA_PROFILES = [
-  { make: 'Apple',   model: 'iPhone 14 Pro',    software: '16.5.1',           fnum: [178, 100], focal: [686, 100], focal35: 24 },
-  { make: 'Apple',   model: 'iPhone 15',        software: '17.4.1',           fnum: [160, 100], focal: [570, 100], focal35: 26 },
-  { make: 'Apple',   model: 'iPhone 15 Pro Max',software: '17.5',             fnum: [178, 100], focal: [686, 100], focal35: 24 },
-  { make: 'samsung', model: 'SM-S918B',         software: 'S918BXXS5EXD5',   fnum: [170, 100], focal: [630, 100], focal35: 23 },
-  { make: 'Google',  model: 'Pixel 8 Pro',      software: 'UP1A.231005.007',  fnum: [168, 100], focal: [650, 100], focal35: 24 },
-  { make: 'Sony',    model: 'XQ-EC72',          software: '13.4.0.0.3',       fnum: [190, 100], focal: [240, 100], focal35: 24 },
-];
-
-app.post('/exif', (req, res) => {
-  if (SECRET && req.headers['x-secret'] !== SECRET)
-    return res.status(401).json({ error: 'unauthorized' });
-
+app.post('/exif', auth, (req, res) => {
   const { imageB64 } = req.body;
   if (!imageB64) return res.status(400).json({ error: 'imageB64 required' });
 
@@ -107,51 +67,8 @@ app.post('/exif', (req, res) => {
     const binary  = Buffer.from(imageB64, 'base64').toString('binary');
     const stripped = piexif.remove(binary);
 
-    const cam = CAMERA_PROFILES[Math.floor(Math.random() * CAMERA_PROFILES.length)];
-
-    const isoPool    = [50, 50, 64, 100, 100, 125, 200, 400, 800, 1600];
-    const iso        = isoPool[Math.floor(Math.random() * isoPool.length)];
-    const shutters   = [[1,4000],[1,2000],[1,1000],[1,500],[1,250],[1,125],[1,60],[1,30]];
-    const [expN, expD] = shutters[Math.floor(Math.random() * shutters.length)];
-
-    const daysBack = Math.floor(Math.random() * 30);
-    const dt       = new Date(Date.now() - daysBack * 86400000 - Math.floor(Math.random() * 72000000));
-    const pad      = n => String(n).padStart(2, '0');
-    const dtStr    = `${dt.getFullYear()}:${pad(dt.getMonth()+1)}:${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`;
-
-    const exifObj = {
-      '0th': {
-        271: cam.make,
-        272: cam.model,
-        274: 1,
-        282: [72, 1],
-        283: [72, 1],
-        296: 2,
-        305: cam.software,
-        306: dtStr,
-        531: 1,
-      },
-      'Exif': {
-        33434: [expN, expD],
-        33437: cam.fnum,
-        34850: 2,
-        34855: iso,
-        36867: dtStr,
-        36868: dtStr,
-        37380: [0, 10],
-        37383: 5,
-        37385: 0,
-        37386: cam.focal,
-        40961: 1,
-        41986: 0,
-        41987: 0,
-        41988: [1, 1],
-        41989: cam.focal35,
-        41990: 0,
-      },
-      'GPS': {},
-      '1st': {},
-    };
+    const cam = pickRandomCamera();
+    const { exifObj } = generateExifData(cam);
 
     const exifBytes = piexif.dump(exifObj);
     const result    = piexif.insert(exifBytes, stripped);
@@ -170,79 +87,6 @@ app.listen(process.env.PORT || 3000, () =>
   console.log('Ready on port', process.env.PORT || 3000)
 );
 
-// ── Emoji ────────────────────────────────────────────────────────────────────
-const EMOJI_RE = /\p{Emoji_Presentation}|\p{Extended_Pictographic}/u;
-const graphemeSegmenter = new Intl.Segmenter('und', { granularity: 'grapheme' });
-
-function isEmojiCluster(g) {
-  return EMOJI_RE.test(g);
-}
-
-async function fetchEmoji(emoji) {
-  if (emojiCache.has(emoji)) return emojiCache.get(emoji);
-  const codepoints = [...emoji]
-    .map(c => c.codePointAt(0).toString(16))
-    .filter(cp => cp !== 'fe0f')
-    .join('-');
-  try {
-    const res = await fetch(
-      `https://cdn.jsdelivr.net/gh/jdecked/twemoji@15.1.0/assets/72x72/${codepoints}.png`
-    );
-    if (!res.ok) { emojiCache.set(emoji, null); return null; }
-    const b64 = Buffer.from(await res.arrayBuffer()).toString('base64');
-    emojiCache.set(emoji, `data:image/png;base64,${b64}`);
-    return emojiCache.get(emoji);
-  } catch (e) {
-    console.error('❌ fetchEmoji failed for', emoji, e.message);
-    emojiCache.set(emoji, null);
-    return null;
-  }
-}
-
-function segmentLine(text) {
-  const segments = [];
-  let textChunk = '';
-  for (const { segment } of graphemeSegmenter.segment(text)) {
-    if (isEmojiCluster(segment)) {
-      if (textChunk) { segments.push({ type: 'text', value: textChunk }); textChunk = ''; }
-      segments.push({ type: 'emoji', value: segment });
-    } else {
-      textChunk += segment;
-    }
-  }
-  if (textChunk) segments.push({ type: 'text', value: textChunk });
-  return segments;
-}
-
-function displayLen(s) {
-  let len = 0;
-  for (const { segment } of graphemeSegmenter.segment(s)) {
-    len += isEmojiCluster(segment) ? 2 : segment.length;
-  }
-  return len;
-}
-
-function wrapText(text, max) {
-  if (!text) return [''];
-  const words = text.split(' ');
-  const lines = [];
-  let cur = '';
-  for (const w of words) {
-    const cand = cur ? cur + ' ' + w : w;
-    if (displayLen(cand) <= max) { cur = cand; continue; }
-    if (cur) lines.push(cur);
-    if (displayLen(w) > max) {
-      let chunk = '';
-      for (const { segment } of graphemeSegmenter.segment(w)) {
-        if (displayLen(chunk + segment) > max) { lines.push(chunk); chunk = segment; }
-        else chunk += segment;
-      }
-      if (chunk) cur = chunk;
-    } else { cur = w; }
-  }
-  if (cur) lines.push(cur);
-  return lines.length ? lines : [''];
-}
 
 // ── X-Post SVG ───────────────────────────────────────────────────────────────
 async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) {
@@ -251,7 +95,6 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
   const CARD_W = 900;
   const CARD_X = (W - CARD_W) / 2;  // 90
 
-  // Renkler
   const TEXT_COLOR  = '#0f1419';
   const HANDLE_CLR  = '#71767b';
   const HASHTAG_CLR = '#1d9bf0';
@@ -260,11 +103,10 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
   const DIVIDER_CLR = '#eff3f4';
   const WATERMARK_CLR = '#ffffff';
 
-  // Ölçekler (1080 canvas)
   const AVATAR_R    = 48;
-  const AVATAR_CX   = CARD_X + 48 + 56;  // 194
+  const AVATAR_CX   = CARD_X + 48 + 56;
 
-  const NAME_X      = AVATAR_CX + AVATAR_R + 20;  // ~262
+  const NAME_X      = AVATAR_CX + AVATAR_R + 20;
   const NAME_FS     = 34;
   const HANDLE_FS   = 26;
 
@@ -284,13 +126,12 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
 
   const DATE_FS     = 24;
 
-  // Engagement ikonları (SVG path)
   const iconComment = 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z';
   const iconRt      = 'M17 1l4 4-4 4M3 11V9a4 4 0 0 1 4-4h14M7 23l-4-4 4-4M21 13v2a4 4 0 0 1-4 4H3';
   const iconHeart   = 'M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z';
   const iconBookmark = 'M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8M16 6 12 2 8 6M12 2v13';
 
-  // ── Metin satırları ───────────────────────────────────────────────
+  // ── Metin satirlari ───────────────────────────────────────────────
   const paragraphs = rawText.split('\n');
   const lines = [];
   for (let p = 0; p < paragraphs.length; p++) {
@@ -299,7 +140,7 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
     if (p < paragraphs.length - 1) lines.push({ text: '', isGap: true });
   }
 
-  // Hashtag segment'leri
+  const emojiCache = getEmojiCache();
   const allEmoji = new Set();
   for (const l of lines) {
     if (!l.text) continue;
@@ -310,14 +151,12 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
   }
   await Promise.all([...allEmoji].map(fetchEmoji));
 
-  // Metin yüksekliği
   const CHAR_W = TEXT_FS * 0.55;
   const textH = lines.reduce((a, l) => {
     if (l.isGap) return a + TEXT_LH * 0.5;
     return a + TEXT_LH;
   }, 0);
 
-  // Fotoğraf
   const hasPhoto = photoB64 && photoB64.length > 0;
   const computedPhotoH = hasPhoto
     ? (photoWidth && photoHeight
@@ -341,13 +180,9 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
   const engY        = divY + 24;
   const cardBottomY = engY + ENG_ICON_SZ + 40;
 
-  // Kart boyunu hesapla
   const cardH = cardBottomY - cardY + 20;
 
-  // Watermark
   const wmY = cardBottomY + 120;
-
-  // Toplam yükseklik
   const H = wmY + 100;
 
   // ── Metin elementleri ────────────────────────────────────────────
@@ -361,17 +196,14 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
 
     const segs = segmentLine(line.text);
 
-    // Hashtag kontrolü
     const hasHashtag = /#[\wçğıöşüÇĞİÖŞÜ]+/.test(line.text);
     const hasEmoji   = segs.some(s => s.type === 'emoji');
 
     if (!hasHashtag && !hasEmoji) {
-      // Düz metin
       els.push(
         `<text x="${TEXT_PAD_X}" y="${Math.round(curY)}" ${FS40} fill="${TEXT_COLOR}">${escapeXml(line.text)}</text>`
       );
     } else {
-      // Hashtag ve/veya emoji içeren satır → segment bazlı render
       let x = TEXT_PAD_X;
       for (const seg of segs) {
         if (seg.type === 'emoji') {
@@ -387,7 +219,6 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
         }
 
         if (seg.type === 'text' && seg.value) {
-          // Hashtag'leri ayır
           const parts = seg.value.split(/(#[\wçğıöşüÇĞİÖŞÜ]+)/);
           for (const part of parts) {
             if (!part) continue;
@@ -404,11 +235,11 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
     curY += TEXT_LH;
   }
 
-  // ── Profil fotoğrafı clip ────────────────────────────────────────
+  // ── Profil fotografi clip ────────────────────────────────────────
   const profileClipId = 'profileClip';
   const profileData = `data:image/jpeg;base64,${brand.profileB64}`;
 
-  // ── Fotoğraf clip ─────────────────────────────────────────────────
+  // ── Fotograf clip ─────────────────────────────────────────────────
   const photoPadX = TEXT_PAD_X;
   const photoW = CARD_W - 72;
   const photoClip = hasPhoto ? `
@@ -416,20 +247,17 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
       <rect x="${photoPadX}" y="${Math.round(photoY)}" width="${photoW}" height="${actualPhotoH}" rx="${PHOTO_CLIP_R}"/>
     </clipPath>` : '';
 
-  // Fotoğraf: object-fit: cover davranışı
-  // SVG'de: preserveAspectRatio="xMidYMid slice" = CSS object-fit: cover
-  // + clipPath ile oval kısımları kes
   const photoImg = hasPhoto ? `
     <image x="${photoPadX}" y="${Math.round(photoY)}"
            width="${photoW}" height="${actualPhotoH}"
            href="data:image/jpeg;base64,${photoB64}"
            clip-path="url(#photoClip)"
            preserveAspectRatio="xMidYMid slice"/>
-    <!-- Köşe yuvarlaklığı overlay (temiz kenar) -->
+    <!-- Kose yuvarlaklik overlay (temiz kenar) -->
     <rect x="${photoPadX}" y="${Math.round(photoY)}" width="${photoW}" height="${actualPhotoH}"
           rx="${PHOTO_CLIP_R}" ry="${PHOTO_CLIP_R}" fill="none" stroke="${DIVIDER_CLR}" stroke-width="1"/>` : '';
 
-  // ── Fake engagement sayıları ──────────────────────────────────────
+  // ── Fake engagement sayilari ──────────────────────────────────────
   const comments = randInt(5, 80);
   const retweets = randInt(3, 40);
   const likes    = randInt(50, 500);
@@ -459,19 +287,19 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
   <rect x="${CARD_X}" y="${cardY}" width="${CARD_W}" height="${cardH}"
         rx="24" ry="24" fill="${CARD_BG}"/>
 
-  <!-- Profil fotoğrafı (dairesel) -->
+  <!-- Profil fotografi (dairesel) -->
   <image x="${AVATAR_CX - AVATAR_R}" y="${AVATAR_CY - AVATAR_R}"
          width="${AVATAR_R * 2}" height="${AVATAR_R * 2}"
          href="${profileData}" clip-path="url(#${profileClipId})"/>
   <circle cx="${AVATAR_CX}" cy="${AVATAR_CY}" r="${AVATAR_R}"
           fill="none" stroke="${DIVIDER_CLR}" stroke-width="2"/>
 
-  <!-- İsim -->
+  <!-- Isim -->
   <text x="${NAME_X}" y="${AVATAR_CY - 14}"
         font-family="Inter Variable" font-size="${NAME_FS}" font-weight="800"
         fill="${TEXT_COLOR}">${escapeXml(brand.name)}</text>
 
-  <!-- Kullanıcı adı -->
+  <!-- Kullanici adi -->
   <text x="${NAME_X}" y="${AVATAR_CY + 18}"
         font-family="Inter Variable" font-size="${HANDLE_FS}" font-weight="400"
         fill="${HANDLE_CLR}">${escapeXml(brand.handle)}</text>
@@ -479,7 +307,7 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
   <!-- Metin -->
   ${els.join('\n  ')}
 
-  <!-- Fotoğraf -->
+  <!-- Fotograf -->
   ${photoImg}
 
   <!-- Tarih -->
@@ -512,7 +340,7 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
           fill="${ENG_CLR}">${retweets}</text>
   </g>
 
-  <!-- Beğeni -->
+  <!-- Begeni -->
   <g transform="translate(${engStartX + (ENG_ICON_SZ + 10) * 1 + ENG_ICON_SZ * 0 + gapX * 1 + (ENG_ICON_SZ + 10 + gapX) * 1}, ${Math.round(engY)})">
     <svg width="${ENG_ICON_SZ}" height="${ENG_ICON_SZ}" viewBox="0 0 24 24">
       <path d="${iconHeart}" fill="none" stroke="${ENG_CLR}" stroke-width="2"/>
@@ -537,13 +365,4 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
         font-family="Inter Variable" font-size="20" font-weight="400"
         fill="${WATERMARK_CLR}" opacity="0.35">${escapeXml(brand.website)}</text>
 </svg>`;
-}
-
-function randInt(min, max) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-function escapeXml(s) {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-          .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 }

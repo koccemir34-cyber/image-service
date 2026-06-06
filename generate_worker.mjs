@@ -1,3 +1,12 @@
+// ⚠️ DEPRECATED: This code generator is outdated.
+//
+// worker.js is now the authoritative source and imports shared modules from
+// shared/telegram.js, shared/state.js, shared/reminders.js, and
+// shared/reminderFlow.js. Edit worker.js and the shared/ modules directly
+// instead of regenerating via this script.
+//
+// This file is kept for historical reference only.
+
 import fs from 'fs';
 
 const WORKER = `
