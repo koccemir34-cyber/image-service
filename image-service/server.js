@@ -4,6 +4,7 @@ import { readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
+import { isEmojiCluster, segmentLine, displayLen, wrapText, escapeXml, randInt } from './utils.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fontBuffer      = readFileSync(join(__dirname, 'inter.ttf'));
@@ -170,12 +171,6 @@ app.listen(process.env.PORT || 3000, () =>
 );
 
 // ── Emoji ────────────────────────────────────────────────────────────────────
-const EMOJI_RE = /\p{Emoji_Presentation}|\p{Extended_Pictographic}/u;
-const graphemeSegmenter = new Intl.Segmenter('und', { granularity: 'grapheme' });
-
-function isEmojiCluster(g) {
-  return EMOJI_RE.test(g);
-}
 
 async function fetchEmoji(emoji) {
   if (emojiCache.has(emoji)) return emojiCache.get(emoji);
@@ -195,51 +190,6 @@ async function fetchEmoji(emoji) {
     emojiCache.set(emoji, null);
     return null;
   }
-}
-
-function segmentLine(text) {
-  const segments = [];
-  let textChunk = '';
-  for (const { segment } of graphemeSegmenter.segment(text)) {
-    if (isEmojiCluster(segment)) {
-      if (textChunk) { segments.push({ type: 'text', value: textChunk }); textChunk = ''; }
-      segments.push({ type: 'emoji', value: segment });
-    } else {
-      textChunk += segment;
-    }
-  }
-  if (textChunk) segments.push({ type: 'text', value: textChunk });
-  return segments;
-}
-
-function displayLen(s) {
-  let len = 0;
-  for (const { segment } of graphemeSegmenter.segment(s)) {
-    len += isEmojiCluster(segment) ? 2 : segment.length;
-  }
-  return len;
-}
-
-function wrapText(text, max) {
-  if (!text) return [''];
-  const words = text.split(' ');
-  const lines = [];
-  let cur = '';
-  for (const w of words) {
-    const cand = cur ? cur + ' ' + w : w;
-    if (displayLen(cand) <= max) { cur = cand; continue; }
-    if (cur) lines.push(cur);
-    if (displayLen(w) > max) {
-      let chunk = '';
-      for (const { segment } of graphemeSegmenter.segment(w)) {
-        if (displayLen(chunk + segment) > max) { lines.push(chunk); chunk = segment; }
-        else chunk += segment;
-      }
-      if (chunk) cur = chunk;
-    } else { cur = w; }
-  }
-  if (cur) lines.push(cur);
-  return lines.length ? lines : [''];
 }
 
 // ── X-Post SVG ───────────────────────────────────────────────────────────────
@@ -537,11 +487,4 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
 </svg>`;
 }
 
-function randInt(min, max) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
 
-function escapeXml(s) {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-          .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
-}

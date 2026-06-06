@@ -1,19 +1,6 @@
-const TELEGRAM_API = "https://api.telegram.org";
+import { STATES, TR_MONTHS, TR_DAYS, parseDate, parseTime, validateMessage, validateRecurringDay, validateStoryText, isSkipWord, bufToB64, cryptoRandomId, resolveRoute, helpMessage } from './worker-utils.mjs';
 
-const STATES = {
-  IDLE: 'idle',
-  ONCE_DATE: 'once_date',
-  ONCE_TIME: 'once_time',
-  ONCE_MESSAGE: 'once_message',
-  ONCE_HOURLY: 'once_hourly',
-  RECURRING_DAY: 'recurring_day',
-  RECURRING_TIME: 'recurring_time',
-  RECURRING_MESSAGE: 'recurring_message',
-  REMINDER_HOURLY: 'reminder_hourly',
-  STORY_TEXT: 'story_text',
-  STORY_PHOTO: 'story_photo',
-  EXIF_PHOTO: 'exif_photo',
-};
+const TELEGRAM_API = "https://api.telegram.org";
 
 export default {
   async fetch(request, env, ctx) {
@@ -151,28 +138,7 @@ async function handleCallbackQuery(query, env) {
   }, env);
 }
 
-function helpMessage() {
-  return `
-📌 */tekhatirlat* — Tek seferlik hatırlatma
-📌 */herhatirlat* — Aylık tekrarlı hatırlatma
-📌 */liste* — Hatırlatmaları listele
-📌 */sil <ID>* — Hatırlatma sil
-📌 */basarili* — Saat başı hatırlatmayı durdur
 
-📌 */brifing* — Günlük sabah brifingi aç (her gün 08:00)
-📌 */brifingkapat* — Günlük sabah brifingi kapat
-
-📌 */story* — Instagram hikaye görseli oluştur
-1\. `/story` yaz
-2\. Metni gir
-3\. Fotoğraf gönder veya *Hayır* yaz
-4\. Görsel hazır ✅
-
-📌 */exifdegis* — Fotoğrafın EXIF bilgilerini gerçekçi kamera verisiyle değiştir
-1\. `/exifdegis` yaz
-2\. Fotoğrafı gönder → EXIF güncellenmiş fotoğraf hazır ✅
-  `.trim();
-}
 
 // ── Liste ─────────────────────────────────────────────────────────────────────
 async function handleList(chatId, env) {
@@ -253,8 +219,6 @@ async function handleBasarili(chatId, env) {
 }
 
 // ── Brifing ───────────────────────────────────────────────────────────────────
-const TR_MONTHS = ['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'];
-const TR_DAYS   = ['Pazar','Pazartesi','Salı','Çarşamba','Perşembe','Cuma','Cumartesi'];
 
 async function handleBrifingAktif(chatId, env) {
   await env.REMINDERS.put(`brifing:${chatId}`, JSON.stringify({ chatId }));
@@ -349,10 +313,11 @@ function warmupImageService(env) {
 
 // Adım 1: metni al, fotoğraf adımına geç
 async function handleStoryText(text, chatId, state, env) {
-  if (!text || text.length < 2)
+  const v = validateStoryText(text);
+  if (!v.ok && v.error === 'too_short')
     return send(chatId, "❌ Metin çok kısa, tekrar girin:", env);
-  if (text.length > 500)
-    return send(chatId, `❌ Metin çok uzun (${text.length}/500 karakter). Lütfen kısaltın:`, env);
+  if (!v.ok && v.error === 'too_long')
+    return send(chatId, `❌ Metin çok uzun (${v.length}/500 karakter). Lütfen kısaltın:`, env);
   state.storyText = text;
   state.step = STATES.STORY_PHOTO;
   await saveState(chatId, state, env);
@@ -362,7 +327,7 @@ async function handleStoryText(text, chatId, state, env) {
 // Adım 2: fotoğraf al (ya da geç) ve üret
 async function handleStoryPhotoStep(text, chatId, state, env, photos) {
   const hasPhoto = photos && photos.length > 0;
-  const skip     = ['hayır', 'hayir', 'h', 'geç', 'gec', 'atla', 'yok'].includes(text.trim().toLowerCase());
+  const skip     = isSkipWord(text);
   if (!hasPhoto && !skip)
     return send(chatId, "📸 Fotoğraf gönderin veya *Hayır* yazın.", env);
   await resetState(chatId, env);
@@ -450,23 +415,14 @@ async function handleExifPhoto(chatId, state, env, photos) {
   }
 }
 
-function bufToB64(buf) {
-  const bytes = new Uint8Array(buf);
-  let s = '';
-  const chunk = 8192;
-  for (let i = 0; i < bytes.length; i += chunk)
-    s += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  return btoa(s);
-}
-
 // ── Tek seferlik hatırlatma akışı ─────────────────────────────────────────────
 async function handleOnceDate(text, chatId, state, env) {
-  const match = text.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
-  if (!match) return send(chatId, "❌ *Format Hatalı!* `GG.AA.YYYY` — Örnek: `21.04.2026`", env);
-  const [, day, month, year] = match.map(Number);
-  const date = new Date(year, month - 1, day);
-  if (isNaN(date.getTime()) || date.getDate() !== day || date.getMonth() !== month - 1)
+  const result = parseDate(text);
+  if (!result.ok && result.error === 'format')
+    return send(chatId, "❌ *Format Hatalı!* `GG.AA.YYYY` — Örnek: `21.04.2026`", env);
+  if (!result.ok)
     return send(chatId, "❌ *Geçersiz Tarih!*", env);
+  const { day, month, year } = result;
   state.parsedDate = { day, month, year };
   state.step = STATES.ONCE_TIME;
   await saveState(chatId, state, env);
@@ -474,11 +430,12 @@ async function handleOnceDate(text, chatId, state, env) {
 }
 
 async function handleOnceTime(text, chatId, state, env) {
-  const match = text.match(/^(\d{1,2}):(\d{2})$/);
-  if (!match) return send(chatId, "❌ *Format Hatalı!* `SS:DD` — Örnek: `14:30`", env);
-  const [, hour, minute] = match.map(Number);
-  if (hour > 23 || minute > 59) return send(chatId, "❌ *Geçersiz Saat!* 00-23 / 00-59 arası olmalı.", env);
-  state.parsedTime = { hour, minute, string: `${hour}:${String(minute).padStart(2,'0')}` };
+  const result = parseTime(text);
+  if (!result.ok && result.error === 'format')
+    return send(chatId, "❌ *Format Hatalı!* `SS:DD` — Örnek: `14:30`", env);
+  if (!result.ok)
+    return send(chatId, "❌ *Geçersiz Saat!* 00-23 / 00-59 arası olmalı.", env);
+  state.parsedTime = { hour: result.hour, minute: result.minute, string: result.string };
   state.step = STATES.ONCE_MESSAGE;
   await saveState(chatId, state, env);
   return send(chatId, `✅ Saat: *${state.parsedTime.string}*\n\n📝 Hatırlatılacak mesajı yazın:`, env);
@@ -512,8 +469,9 @@ async function handleOnceHourly(text, chatId, state, env) {
 
 // ── Tekrarlı hatırlatma akışı ─────────────────────────────────────────────────
 async function handleRecurringDay(text, chatId, state, env) {
-  const day = parseInt(text);
-  if (!day || day < 1 || day > 31) return send(chatId, "❌ 1-31 arası bir sayı girin.", env);
+  const result = validateRecurringDay(text);
+  if (!result.ok) return send(chatId, "❌ 1-31 arası bir sayı girin.", env);
+  const { day } = result;
   state.targetDay = day;
   state.step = STATES.RECURRING_TIME;
   await saveState(chatId, state, env);
@@ -521,11 +479,12 @@ async function handleRecurringDay(text, chatId, state, env) {
 }
 
 async function handleRecurringTime(text, chatId, state, env) {
-  const match = text.match(/^(\d{1,2}):(\d{2})$/);
-  if (!match) return send(chatId, "❌ *Format Hatalı!* `SS:DD` — Örnek: `10:00`", env);
-  const [, hour, minute] = match.map(Number);
-  if (hour > 23 || minute > 59) return send(chatId, "❌ *Geçersiz Saat!*", env);
-  state.parsedTime = { hour, minute, string: `${hour}:${String(minute).padStart(2,'0')}` };
+  const result = parseTime(text);
+  if (!result.ok && result.error === 'format')
+    return send(chatId, "❌ *Format Hatalı!* `SS:DD` — Örnek: `10:00`", env);
+  if (!result.ok)
+    return send(chatId, "❌ *Geçersiz Saat!*", env);
+  state.parsedTime = { hour: result.hour, minute: result.minute, string: result.string };
   state.step = STATES.RECURRING_MESSAGE;
   await saveState(chatId, state, env);
   return send(chatId, `✅ Saat: *${state.parsedTime.string}*\n\n📝 Hatırlatılacak mesajı yazın:`, env);
@@ -557,12 +516,6 @@ async function saveState(chatId, state, env) {
 }
 async function resetState(chatId, env) {
   await env.REMINDERS.delete(`user:${chatId}:state`);
-}
-function cryptoRandomId(len) {
-  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  let r = '';
-  for (let i = 0; i < len; i++) r += chars[Math.floor(Math.random() * chars.length)];
-  return r;
 }
 
 // ── Cron ──────────────────────────────────────────────────────────────────────

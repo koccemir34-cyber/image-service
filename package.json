@@ -4,9 +4,14 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@resvg/resvg-wasm": "^2.6.2"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.8"
   }
 }
