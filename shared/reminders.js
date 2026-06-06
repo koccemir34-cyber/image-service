@@ -16,20 +16,33 @@ export async function handleList(chatId, env) {
     let message = "📋 *Aktif Hatırlatmaların:*\n\n";
 
     for (const key of list.keys) {
-      const data = JSON.parse(await env.REMINDERS.get(key.name));
-      if (data.sent && !data.hourlyActive) continue;
-      const date = new Date(data.targetTime);
-      const ds = `${date.getDate()}.${date.getMonth()+1}.${date.getFullYear()} ${date.getHours()}:${String(date.getMinutes()).padStart(2,'0')}`;
-      message += `🔹 *\`ID: ${key.name.split(':')[2]}\`*\n   📅 ${ds}${data.hourly ? ' 🔄' : ''}\n   📝 ${data.msg}\n\n`;
+      try {
+        const raw = await env.REMINDERS.get(key.name);
+        if (!raw) continue;
+        const data = JSON.parse(raw);
+        if (data.sent && !data.hourlyActive) continue;
+        const date = new Date(data.targetTime);
+        const ds = `${date.getDate()}.${date.getMonth()+1}.${date.getFullYear()} ${date.getHours()}:${String(date.getMinutes()).padStart(2,'0')}`;
+        message += `🔹 *\`ID: ${key.name.split(':')[2]}\`*\n   📅 ${ds}${data.hourly ? ' 🔄' : ''}\n   📝 ${data.msg}\n\n`;
+      } catch (e) {
+        console.error("❌ Corrupt reminder entry:", key.name, e);
+      }
     }
     for (const key of recurringList.keys) {
-      const data = JSON.parse(await env.REMINDERS.get(key.name));
-      message += `🔁 *\`ID: ${key.name.split(':')[2]}\`*\n   🗓️ Her ayın ${data.targetDay}. günü, ${data.targetTime}${data.hourly ? ' 🔄' : ''}\n   📝 ${data.msg}\n\n`;
+      try {
+        const raw = await env.REMINDERS.get(key.name);
+        if (!raw) continue;
+        const data = JSON.parse(raw);
+        message += `🔁 *\`ID: ${key.name.split(':')[2]}\`*\n   🗓️ Her ayın ${data.targetDay}. günü, ${data.targetTime}${data.hourly ? ' 🔄' : ''}\n   📝 ${data.msg}\n\n`;
+      } catch (e) {
+        console.error("❌ Corrupt recurring entry:", key.name, e);
+      }
     }
 
     message += `\n💡 *Silmek için:* \`/sil <ID>\` yaz`;
     return send(chatId, message, env);
   } catch (err) {
+    console.error("❌ handleList error:", err);
     return send(chatId, "⚠️ Liste yüklenirken hata oluştu.", env);
   }
 }
@@ -54,7 +67,9 @@ export async function cleanupCountdownFlags(baseKey, env) {
   try {
     const flags = await env.REMINDERS.list({ prefix: `${baseKey}:cd` });
     for (const flag of flags.keys) await env.REMINDERS.delete(flag.name);
-  } catch (e) {}
+  } catch (e) {
+    console.error("❌ cleanupCountdownFlags failed for", baseKey, e);
+  }
 }
 
 export async function handleBasarili(chatId, env) {

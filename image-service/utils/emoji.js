@@ -24,7 +24,8 @@ export async function fetchEmoji(emoji) {
     const b64 = Buffer.from(await res.arrayBuffer()).toString('base64');
     emojiCache.set(emoji, `data:image/png;base64,${b64}`);
     return emojiCache.get(emoji);
-  } catch {
+  } catch (e) {
+    console.error('❌ fetchEmoji failed for', emoji, e.message);
     emojiCache.set(emoji, null);
     return null;
   }

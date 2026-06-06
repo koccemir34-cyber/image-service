@@ -58,7 +58,8 @@ app.post('/exif', auth, (req, res) => {
   try {
     const require = createRequire(import.meta.url);
     piexif = require('piexifjs');
-  } catch {
+  } catch (e) {
+    console.error('❌ piexifjs load failed:', e);
     return res.status(500).json({ error: 'piexifjs not installed' });
   }
 
@@ -86,6 +87,7 @@ app.listen(process.env.PORT || 3000, () =>
   console.log('Ready on port', process.env.PORT || 3000)
 );
 
+
 // ── X-Post SVG ───────────────────────────────────────────────────────────────
 async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) {
   const W = 1080;
@@ -103,7 +105,6 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
 
   const AVATAR_R    = 48;
   const AVATAR_CX   = CARD_X + 48 + 56;
-  const AVATAR_CY   = 340;
 
   const NAME_X      = AVATAR_CX + AVATAR_R + 20;
   const NAME_FS     = 34;
@@ -113,7 +114,7 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
   const TEXT_W      = CARD_W - 72;
   const TEXT_FS     = 40;
   const TEXT_LH     = 64;
-  const TEXT_MAX_CH = 24;
+  const TEXT_MAX_CH = 42;
 
   const PHOTO_H     = 420;
   const PHOTO_GAP   = 20;
@@ -168,7 +169,8 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
   // ── Koordinatlar ──────────────────────────────────────────────────
   const cardY       = 160;
   const headerY     = cardY + 32;
-  const textStartY  = headerY + AVATAR_R * 2 + 24;
+  const AVATAR_CY   = headerY + 24 + AVATAR_R;  // avatar center, relative to header
+  const textStartY  = AVATAR_CY + AVATAR_R + 28; // text starts below avatar with gap
   const textEndY    = textStartY + textH;
   const photoY      = hasPhoto ? textEndY + photoGap : 0;
   const photoEndY   = hasPhoto ? photoY + actualPhotoH : textEndY;

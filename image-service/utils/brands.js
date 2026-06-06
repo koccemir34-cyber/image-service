@@ -13,8 +13,8 @@ const LOGO_REMAZ_B64  = readFileSync(join(serviceDir, 'logo_remaz_b64.txt'), 'ut
 
 let PROFILE_SK_B64    = '';
 let PROFILE_REMAZ_B64 = '';
-try { PROFILE_SK_B64    = readFileSync(join(serviceDir, 'profile-sk.jpg')).toString('base64'); }    catch {}
-try { PROFILE_REMAZ_B64 = readFileSync(join(serviceDir, 'profile-remaz.jpg')).toString('base64'); }  catch {}
+try { PROFILE_SK_B64    = readFileSync(join(serviceDir, 'profile-sk.jpg')).toString('base64'); }    catch (e) { console.warn('⚠️ profile-sk.jpg not found, falling back to logo:', e.message); }
+try { PROFILE_REMAZ_B64 = readFileSync(join(serviceDir, 'profile-remaz.jpg')).toString('base64'); }  catch (e) { console.warn('⚠️ profile-remaz.jpg not found, falling back to logo:', e.message); }
 
 export const BRANDS = {
   selhattin: {
