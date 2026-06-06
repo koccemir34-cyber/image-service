@@ -1,4 +1,10 @@
-const TELEGRAM_API = "https://api.telegram.org";
+import { TELEGRAM_API, send, sendWithKeyboard } from './shared/telegram.js';
+import { saveState, resetState, cryptoRandomId } from './shared/state.js';
+import { handleList, handleDelete, cleanupCountdownFlags, handleBasarili } from './shared/reminders.js';
+import {
+  handleOnceDate, handleOnceTime, handleOnceMessage, handleOnceHourly,
+  handleRecurringDay, handleRecurringTime, handleRecurringMessage, handleReminderHourly,
+} from './shared/reminderFlow.js';
 
 const STATES = {
   IDLE: 'idle',
@@ -49,7 +55,6 @@ async function handleWebhook(update, env) {
     const saved = await env.REMINDERS.get(stateKey);
     if (saved) state = JSON.parse(saved);
 
-    // Global komutlar — state ne olursa olsun çalışır
     if (text === "/basarili") return handleBasarili(chatId, env);
     if (text === "/start") {
       await resetState(chatId, env);
@@ -135,16 +140,13 @@ async function sendStart(chatId, name, env) {
 
 async function handleCallbackQuery(query, env) {
   const chatId = query.message.chat.id;
-  const name   = query.from?.first_name || "Kullanıcı";
 
-  // Telegram spinner'ını kapat
   fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/answerCallbackQuery`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ callback_query_id: query.id })
   }).catch(() => {});
 
-  // Butona basıldığında mevcut akışı sıfırla, komutu çalıştır
   await resetState(chatId, env);
   return handleWebhook({
     message: { chat: { id: chatId }, from: query.from, text: query.data, photo: null }
@@ -163,93 +165,15 @@ function helpMessage() {
 📌 */brifingkapat* — Günlük sabah brifingi kapat
 
 📌 */story* — Instagram hikaye görseli oluştur
-1\. `/story` yaz
+1\. \`/story\` yaz
 2\. Metni gir
 3\. Fotoğraf gönder veya *Hayır* yaz
 4\. Görsel hazır ✅
 
 📌 */exifdegis* — Fotoğrafın EXIF bilgilerini gerçekçi kamera verisiyle değiştir
-1\. `/exifdegis` yaz
+1\. \`/exifdegis\` yaz
 2\. Fotoğrafı gönder → EXIF güncellenmiş fotoğraf hazır ✅
   `.trim();
-}
-
-// ── Liste ─────────────────────────────────────────────────────────────────────
-async function handleList(chatId, env) {
-  try {
-    const list          = await env.REMINDERS.list({ prefix: `once:${chatId}:` });
-    const recurringList = await env.REMINDERS.list({ prefix: `rec:${chatId}:` });
-    const allReminders  = [...list.keys, ...recurringList.keys];
-
-    if (allReminders.length === 0)
-      return send(chatId, "📭 *Henüz hiç hatırlatman yok!*\n\n/tekhatirlat veya /herhatirlat ile oluşturabilirsin.", env);
-
-    let message = "📋 *Aktif Hatırlatmaların:*\n\n";
-
-    for (const key of list.keys) {
-      const data = JSON.parse(await env.REMINDERS.get(key.name));
-      if (data.sent && !data.hourlyActive) continue;
-      const date = new Date(data.targetTime);
-      const ds = `${date.getDate()}.${date.getMonth()+1}.${date.getFullYear()} ${date.getHours()}:${String(date.getMinutes()).padStart(2,'0')}`;
-      message += `🔹 *\`ID: ${key.name.split(':')[2]}\`*\n   📅 ${ds}${data.hourly ? ' 🔄' : ''}\n   📝 ${data.msg}\n\n`;
-    }
-    for (const key of recurringList.keys) {
-      const data = JSON.parse(await env.REMINDERS.get(key.name));
-      message += `🔁 *\`ID: ${key.name.split(':')[2]}\`*\n   🗓️ Her ayın ${data.targetDay}. günü, ${data.targetTime}${data.hourly ? ' 🔄' : ''}\n   📝 ${data.msg}\n\n`;
-    }
-
-    message += `\n💡 *Silmek için:* \`/sil <ID>\` yaz`;
-    return send(chatId, message, env);
-  } catch (err) {
-    return send(chatId, "⚠️ Liste yüklenirken hata oluştu.", env);
-  }
-}
-
-// ── Sil ───────────────────────────────────────────────────────────────────────
-async function handleDelete(text, chatId, env) {
-  const reminderId = text.replace('/sil', '').trim();
-  if (!reminderId) return send(chatId, "❌ *Kullanım:* `/sil <ID>`", env);
-
-  for (const prefix of [`once:${chatId}:`, `rec:${chatId}:`]) {
-    const key  = prefix + reminderId;
-    const data = await env.REMINDERS.get(key);
-    if (data) {
-      await env.REMINDERS.delete(key);
-      await cleanupCountdownFlags(key, env);
-      return send(chatId, `✅ *\`${reminderId}\`* silindi. 🗑️`, env);
-    }
-  }
-  return send(chatId, `❌ *\`${reminderId}\`* bulunamadı. /liste ile kontrol et.`, env);
-}
-
-async function cleanupCountdownFlags(baseKey, env) {
-  try {
-    const flags = await env.REMINDERS.list({ prefix: `${baseKey}:cd` });
-    for (const flag of flags.keys) await env.REMINDERS.delete(flag.name);
-  } catch (e) {}
-}
-
-// ── Başarılı ──────────────────────────────────────────────────────────────────
-async function handleBasarili(chatId, env) {
-  const onceList = await env.REMINDERS.list({ prefix: `once:${chatId}:` });
-  const recList  = await env.REMINDERS.list({ prefix: `rec:${chatId}:` });
-  let confirmed  = 0;
-
-  for (const key of [...onceList.keys, ...recList.keys]) {
-    const raw = await env.REMINDERS.get(key.name);
-    if (!raw) continue;
-    const data = JSON.parse(raw);
-    if (data.awaitingConfirmation) {
-      data.awaitingConfirmation = false;
-      data.hourlyActive = false;
-      await env.REMINDERS.put(key.name, JSON.stringify(data));
-      confirmed++;
-    }
-  }
-
-  return confirmed > 0
-    ? send(chatId, "✅ *Tamamlandı!* Saat başı hatırlatma durduruldu. 👍", env)
-    : send(chatId, "⚠️ Şu an onay bekleyen aktif hatırlatma yok.", env);
 }
 
 // ── Brifing ───────────────────────────────────────────────────────────────────
@@ -279,7 +203,6 @@ async function buildBrifingMessage(chatId, env) {
 
   let msg = `📋 *Günlük Brifing*\n📅 ${day} ${TR_MONTHS[month]} ${year}, ${TR_DAYS[dow]}\n`;
 
-  // Yaklaşan tek seferlik hatırlatmalar (7 gün içinde)
   const onceList = await env.REMINDERS.list({ prefix: `once:${chatId}:` });
   const upcoming = [];
   for (const key of onceList.keys) {
@@ -298,7 +221,6 @@ async function buildBrifingMessage(chatId, env) {
     }
   }
 
-  // Bu ay içinde gelecek tekrarlı hatırlatmalar
   const recList = await env.REMINDERS.list({ prefix: `rec:${chatId}:` });
   const recItems = [];
   for (const key of recList.keys) {
@@ -330,7 +252,7 @@ async function sendDailyBrifing(env) {
 
   const subs = await env.REMINDERS.list({ prefix: 'brifing:' });
   for (const key of subs.keys) {
-    if (key.name.split(':').length !== 2) continue; // sadece brifing:{chatId}
+    if (key.name.split(':').length !== 2) continue;
     const sentKey = `${key.name}:sent:${dateKey}`;
     if (await env.REMINDERS.get(sentKey)) continue;
     const data = JSON.parse(await env.REMINDERS.get(key.name));
@@ -340,14 +262,13 @@ async function sendDailyBrifing(env) {
   }
 }
 
-// ── Servis ısıtma ─────────────────────────────────────────────────────────────
+// ── Servis isitma ─────────────────────────────────────────────────────────────
 function warmupImageService(env) {
   fetch(`${env.IMAGE_SERVICE_URL}/`).catch(() => {});
 }
 
 // ── Story ─────────────────────────────────────────────────────────────────────
 
-// Adım 1: metni al, fotoğraf adımına geç
 async function handleStoryText(text, chatId, state, env) {
   if (!text || text.length < 2)
     return send(chatId, "❌ Metin çok kısa, tekrar girin:", env);
@@ -359,7 +280,6 @@ async function handleStoryText(text, chatId, state, env) {
   return send(chatId, `✅ Metin kaydedildi.\n\n📸 Şimdi bir *fotoğraf gönderin* ya da fotoğrafsız devam etmek için *Hayır* yazın.`, env);
 }
 
-// Adım 2: fotoğraf al (ya da geç) ve üret
 async function handleStoryPhotoStep(text, chatId, state, env, photos) {
   const hasPhoto = photos && photos.length > 0;
   const skip     = ['hayır', 'hayir', 'h', 'geç', 'gec', 'atla', 'yok'].includes(text.trim().toLowerCase());
@@ -369,7 +289,6 @@ async function handleStoryPhotoStep(text, chatId, state, env, photos) {
   await generateAndSendStory(state.storyText, chatId, env, hasPhoto ? photos : null, state.brand || "selhattin");
 }
 
-// Ortak üretim fonksiyonu — 3 stili paralel üretip album olarak gönderir
 async function generateAndSendStory(storyText, chatId, env, photos, brand = "selhattin") {
   await send(chatId, "⏳ Görsel oluşturuluyor...", env);
   try {
@@ -409,7 +328,7 @@ async function generateAndSendStory(storyText, chatId, env, photos, brand = "sel
   }
 }
 
-// ── EXIF Değiştir ─────────────────────────────────────────────────────────────
+// ── EXIF Degistir ─────────────────────────────────────────────────────────────
 async function handleExifPhoto(chatId, state, env, photos) {
   if (!photos || photos.length === 0)
     return send(chatId, "📸 Lütfen bir fotoğraf gönderin (dosya olarak değil, fotoğraf olarak).", env);
@@ -459,119 +378,13 @@ function bufToB64(buf) {
   return btoa(s);
 }
 
-// ── Tek seferlik hatırlatma akışı ─────────────────────────────────────────────
-async function handleOnceDate(text, chatId, state, env) {
-  const match = text.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
-  if (!match) return send(chatId, "❌ *Format Hatalı!* `GG.AA.YYYY` — Örnek: `21.04.2026`", env);
-  const [, day, month, year] = match.map(Number);
-  const date = new Date(year, month - 1, day);
-  if (isNaN(date.getTime()) || date.getDate() !== day || date.getMonth() !== month - 1)
-    return send(chatId, "❌ *Geçersiz Tarih!*", env);
-  state.parsedDate = { day, month, year };
-  state.step = STATES.ONCE_TIME;
-  await saveState(chatId, state, env);
-  return send(chatId, `✅ Tarih: *${day}.${month}.${year}*\n\n⏰ Saati girin: \`SS:DD\` — Örnek: \`14:30\``, env);
-}
-
-async function handleOnceTime(text, chatId, state, env) {
-  const match = text.match(/^(\d{1,2}):(\d{2})$/);
-  if (!match) return send(chatId, "❌ *Format Hatalı!* `SS:DD` — Örnek: `14:30`", env);
-  const [, hour, minute] = match.map(Number);
-  if (hour > 23 || minute > 59) return send(chatId, "❌ *Geçersiz Saat!* 00-23 / 00-59 arası olmalı.", env);
-  state.parsedTime = { hour, minute, string: `${hour}:${String(minute).padStart(2,'0')}` };
-  state.step = STATES.ONCE_MESSAGE;
-  await saveState(chatId, state, env);
-  return send(chatId, `✅ Saat: *${state.parsedTime.string}*\n\n📝 Hatırlatılacak mesajı yazın:`, env);
-}
-
-async function handleOnceMessage(text, chatId, state, env) {
-  if (!text || text.length < 3) return send(chatId, "❌ Mesaj en az 3 karakter olmalı.", env);
-  state.message = text;
-  state.step = STATES.ONCE_HOURLY;
-  await saveState(chatId, state, env);
-  return send(chatId, `✅ Mesaj: *${text}*\n\n🔄 Saat başı hatırlatayım mı? \`E\` / \`H\``, env);
-}
-
-async function handleOnceHourly(text, chatId, state, env) {
-  const hourly = text.trim().toUpperCase() === 'E';
-  const { day, month, year } = state.parsedDate;
-  const { hour, minute }     = state.parsedTime;
-  const remindDate = new Date(Date.UTC(year, month - 1, day, hour - 3, minute));
-  if (remindDate < new Date()) {
-    await resetState(chatId, env);
-    return send(chatId, "❌ *Geçmiş tarih!* Lütfen yeni bir hatırlatma oluşturun.", env);
-  }
-  const reminderId = cryptoRandomId(8);
-  await env.REMINDERS.put(`once:${chatId}:${reminderId}`, JSON.stringify({
-    type: "once", chatId, msg: state.message,
-    targetTime: remindDate.getTime(), hourly, sent: false, createdAt: Date.now()
-  }));
-  await resetState(chatId, env);
-  return send(chatId, `✅ *Hatırlatma Kuruldu!*\n🆔 \`${reminderId}\`\n📅 ${day}.${month}.${year} ${hour}:${String(minute).padStart(2,'0')}\n📝 ${state.message}${hourly ? '\n🔄 Saat başı: *AKTİF*' : ''}`, env);
-}
-
-// ── Tekrarlı hatırlatma akışı ─────────────────────────────────────────────────
-async function handleRecurringDay(text, chatId, state, env) {
-  const day = parseInt(text);
-  if (!day || day < 1 || day > 31) return send(chatId, "❌ 1-31 arası bir sayı girin.", env);
-  state.targetDay = day;
-  state.step = STATES.RECURRING_TIME;
-  await saveState(chatId, state, env);
-  return send(chatId, `✅ Her ayın *${day}.* günü\n\n⏰ Saati girin: \`SS:DD\` — Örnek: \`10:00\``, env);
-}
-
-async function handleRecurringTime(text, chatId, state, env) {
-  const match = text.match(/^(\d{1,2}):(\d{2})$/);
-  if (!match) return send(chatId, "❌ *Format Hatalı!* `SS:DD` — Örnek: `10:00`", env);
-  const [, hour, minute] = match.map(Number);
-  if (hour > 23 || minute > 59) return send(chatId, "❌ *Geçersiz Saat!*", env);
-  state.parsedTime = { hour, minute, string: `${hour}:${String(minute).padStart(2,'0')}` };
-  state.step = STATES.RECURRING_MESSAGE;
-  await saveState(chatId, state, env);
-  return send(chatId, `✅ Saat: *${state.parsedTime.string}*\n\n📝 Hatırlatılacak mesajı yazın:`, env);
-}
-
-async function handleRecurringMessage(text, chatId, state, env) {
-  if (!text || text.length < 3) return send(chatId, "❌ Mesaj en az 3 karakter olmalı.", env);
-  state.message = text;
-  state.step = STATES.REMINDER_HOURLY;
-  await saveState(chatId, state, env);
-  return send(chatId, `✅ Mesaj: *${text}*\n\n🔄 Saat başı hatırlatayım mı? \`E\` / \`H\``, env);
-}
-
-async function handleReminderHourly(text, chatId, state, env) {
-  const hourly = text.trim().toUpperCase() === 'E';
-  const reminderId = cryptoRandomId(8);
-  await env.REMINDERS.put(`rec:${chatId}:${reminderId}`, JSON.stringify({
-    type: "recurring", chatId, msg: state.message,
-    targetDay: state.targetDay, targetTime: state.parsedTime.string,
-    hourly, lastSent: null, createdAt: Date.now()
-  }));
-  await resetState(chatId, env);
-  return send(chatId, `✅ *Aylık Hatırlatma Kuruldu!*\n🆔 \`${reminderId}\`\n🔁 Her ayın ${state.targetDay}. günü ${state.parsedTime.string}\n📝 ${state.message}${hourly ? '\n🔄 Saat başı: *AKTİF*' : ''}\n⚠️ 2 gün ve 1 gün öncesinde otomatik ön hatırlatma!`, env);
-}
-
-// ── State yönetimi ────────────────────────────────────────────────────────────
-async function saveState(chatId, state, env) {
-  await env.REMINDERS.put(`user:${chatId}:state`, JSON.stringify(state));
-}
-async function resetState(chatId, env) {
-  await env.REMINDERS.delete(`user:${chatId}:state`);
-}
-function cryptoRandomId(len) {
-  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  let r = '';
-  for (let i = 0; i < len; i++) r += chars[Math.floor(Math.random() * chars.length)];
-  return r;
-}
-
 // ── Cron ──────────────────────────────────────────────────────────────────────
 async function runCron(env) {
   await sendDailyBrifing(env);
 
   const list         = await env.REMINDERS.list();
   const now          = new Date();
-  const nowTR        = new Date(now.getTime() + 3 * 60 * 60 * 1000); // UTC+3 (Türkiye)
+  const nowTR        = new Date(now.getTime() + 3 * 60 * 60 * 1000);
   const today        = nowTR.getUTCDate();
   const currentMonth = nowTR.getUTCMonth();
   const currentYear  = nowTR.getUTCFullYear();
@@ -632,38 +445,4 @@ async function runCron(env) {
       }
     }
   }
-}
-
-// ── Telegram send ─────────────────────────────────────────────────────────────
-async function send(chatId, text, env) {
-  try {
-    const res = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text, parse_mode: "Markdown" })
-    });
-    if (!res.ok) console.error("❌ Telegram API Error:", await res.text());
-  } catch (e) {
-    console.error("❌ SEND ERROR:", e);
-  }
-  return new Response("ok");
-}
-
-async function sendWithKeyboard(chatId, text, keyboard, env) {
-  try {
-    const res = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text,
-        parse_mode: "Markdown",
-        reply_markup: { inline_keyboard: keyboard }
-      })
-    });
-    if (!res.ok) console.error("❌ Telegram API Error:", await res.text());
-  } catch (e) {
-    console.error("❌ SENDKBD ERROR:", e);
-  }
-  return new Response("ok");
 }
