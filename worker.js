@@ -20,11 +20,20 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === "/")     return new Response("🤖 Telegram Hatırlatma Botu Aktif ✅");
     if (url.pathname === "/bot") {
+      const expectedToken = env.WEBHOOK_SECRET || '';
+      if (expectedToken && request.headers.get('x-telegram-bot-api-secret-token') !== expectedToken)
+        return new Response('Unauthorized', { status: 401 });
       const update = await request.json().catch(() => null);
       if (update) ctx.waitUntil(handleWebhook(update, env));
       return new Response("ok");
     }
-    if (url.pathname === "/cron") { await runCron(env); return new Response("✅ Cron çalıştı"); }
+    if (url.pathname === "/cron") {
+      const cronSecret = env.CRON_SECRET || '';
+      if (cronSecret && url.searchParams.get('secret') !== cronSecret)
+        return new Response('Unauthorized', { status: 401 });
+      await runCron(env);
+      return new Response("Cron executed");
+    }
     return new Response("404 Not Found", { status: 404 });
   },
 
@@ -560,8 +569,10 @@ async function resetState(chatId, env) {
 }
 function cryptoRandomId(len) {
   const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  const bytes = new Uint8Array(len);
+  crypto.getRandomValues(bytes);
   let r = '';
-  for (let i = 0; i < len; i++) r += chars[Math.floor(Math.random() * chars.length)];
+  for (let i = 0; i < len; i++) r += chars[bytes[i] % chars.length];
   return r;
 }
 
