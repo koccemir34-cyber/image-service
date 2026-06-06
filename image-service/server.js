@@ -290,13 +290,35 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand, 
   const iconHeart   = 'M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z';
   const iconBookmark = 'M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8M16 6 12 2 8 6M12 2v13';
 
+  // ── Etiketleri ayır ──────────────────────────────────────────────
+  const hashtagRe = /#[\wçğıöşüÇĞİÖŞÜ]+/g;
+  const hashtags = [];
+  // Metindeki tüm hashtag'leri topla
+  let bodyText = rawText.replace(hashtagRe, (match) => {
+    hashtags.push(match);
+    return '';
+  });
+  // Temizle: çift boşlukları tek yap, satır sonu boşlukları sil
+  bodyText = bodyText.replace(/[ \t]+/g, ' ').replace(/ ?\n ?/g, '\n').trim();
+
   // ── Metin satırları ───────────────────────────────────────────────
-  const paragraphs = rawText.split('\n');
+  const paragraphs = bodyText.split('\n');
   const lines = [];
   for (let p = 0; p < paragraphs.length; p++) {
-    const wrapped = wrapText(paragraphs[p].trim(), TEXT_MAX_CH);
+    const trimmed = paragraphs[p].trim();
+    if (!trimmed && lines.length > 0) { lines.push({ text: '', isGap: true }); continue; }
+    if (!trimmed) continue;
+    const wrapped = wrapText(trimmed, TEXT_MAX_CH);
     for (const w of wrapped) lines.push({ text: w, isGap: false });
     if (p < paragraphs.length - 1) lines.push({ text: '', isGap: true });
+  }
+
+  // Etiketleri en sona ekle, her biri ayrı satırda
+  if (hashtags.length > 0) {
+    lines.push({ text: '', isGap: true });
+    for (const tag of hashtags) {
+      lines.push({ text: tag, isGap: false });
+    }
   }
 
   // Hashtag segment'leri
