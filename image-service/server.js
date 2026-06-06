@@ -272,7 +272,7 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
   const TEXT_W      = CARD_W - 72;
   const TEXT_FS     = 40;
   const TEXT_LH     = 64;
-  const TEXT_MAX_CH = 24;
+  const TEXT_MAX_CH = 42;
 
   const PHOTO_H     = 420;
   const PHOTO_GAP   = 20;
