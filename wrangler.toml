@@ -7,5 +7,3 @@ compatibility_flags = ["nodejs_compat"]
 binding = "REMINDERS"
 id = "1d4f7929d11f453c8e43b351323e239d"
 
-[vars]
-IMAGE_SERVICE_URL = "RENDER_URL_BURAYA"

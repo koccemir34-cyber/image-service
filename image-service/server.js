@@ -15,8 +15,8 @@ const SECRET          = process.env.IMAGE_SECRET || '';
 // Yeni: profil foto dosyalari. Varsa kullanilir, yoksa logo kullanilir.
 let PROFILE_SK_B64    = '';
 let PROFILE_REMAZ_B64 = '';
-try { PROFILE_SK_B64    = readFileSync(join(__dirname, 'profile-sk.jpg')).toString('base64'); }    catch {}
-try { PROFILE_REMAZ_B64 = readFileSync(join(__dirname, 'profile-remaz.jpg')).toString('base64'); }  catch {}
+try { PROFILE_SK_B64    = readFileSync(join(__dirname, 'profile-sk.jpg')).toString('base64'); }    catch (e) { console.warn('⚠️ profile-sk.jpg not found, falling back to logo:', e.message); }
+try { PROFILE_REMAZ_B64 = readFileSync(join(__dirname, 'profile-remaz.jpg')).toString('base64'); }  catch (e) { console.warn('⚠️ profile-remaz.jpg not found, falling back to logo:', e.message); }
 
 const BRANDS = {
   selhattin: {
@@ -98,7 +98,8 @@ app.post('/exif', (req, res) => {
   try {
     const require = createRequire(import.meta.url);
     piexif = require('piexifjs');
-  } catch {
+  } catch (e) {
+    console.error('❌ piexifjs load failed:', e);
     return res.status(500).json({ error: 'piexifjs not installed' });
   }
 
@@ -191,7 +192,8 @@ async function fetchEmoji(emoji) {
     const b64 = Buffer.from(await res.arrayBuffer()).toString('base64');
     emojiCache.set(emoji, `data:image/png;base64,${b64}`);
     return emojiCache.get(emoji);
-  } catch {
+  } catch (e) {
+    console.error('❌ fetchEmoji failed for', emoji, e.message);
     emojiCache.set(emoji, null);
     return null;
   }
@@ -261,7 +263,6 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
   // Ölçekler (1080 canvas)
   const AVATAR_R    = 48;
   const AVATAR_CX   = CARD_X + 48 + 56;  // 194
-  const AVATAR_CY   = 340;
 
   const NAME_X      = AVATAR_CX + AVATAR_R + 20;  // ~262
   const NAME_FS     = 34;
@@ -271,7 +272,7 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
   const TEXT_W      = CARD_W - 72;
   const TEXT_FS     = 40;
   const TEXT_LH     = 64;
-  const TEXT_MAX_CH = 24;
+  const TEXT_MAX_CH = 42;
 
   const PHOTO_H     = 420;
   const PHOTO_GAP   = 20;
@@ -329,7 +330,8 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
   // ── Koordinatlar ──────────────────────────────────────────────────
   const cardY       = 160;
   const headerY     = cardY + 32;
-  const textStartY  = headerY + AVATAR_R * 2 + 24;
+  const AVATAR_CY   = headerY + 24 + AVATAR_R;  // avatar center, relative to header
+  const textStartY  = AVATAR_CY + AVATAR_R + 28; // text starts below avatar with gap
   const textEndY    = textStartY + textH;
   const photoY      = hasPhoto ? textEndY + photoGap : 0;
   const photoEndY   = hasPhoto ? photoY + actualPhotoH : textEndY;

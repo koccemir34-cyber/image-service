@@ -47,7 +47,15 @@ async function handleWebhook(update, env) {
 
     let state = { step: STATES.IDLE };
     const saved = await env.REMINDERS.get(stateKey);
-    if (saved) state = JSON.parse(saved);
+    if (saved) {
+      try {
+        state = JSON.parse(saved);
+      } catch (parseErr) {
+        console.error("❌ Corrupt state for", stateKey, parseErr);
+        await env.REMINDERS.delete(stateKey);
+        state = { step: STATES.IDLE };
+      }
+    }
 
     // Global komutlar — state ne olursa olsun çalışır
     if (text === "/basarili") return handleBasarili(chatId, env);
@@ -106,6 +114,10 @@ async function handleWebhook(update, env) {
     return send(chatId, "⚠️ Beklenmeyen durum. `/start` ile yeniden başlayın.", env);
   } catch (err) {
     console.error("❌ WEBHOOK ERROR:", err);
+    try {
+      const chatId = update?.message?.chat?.id || update?.callback_query?.message?.chat?.id;
+      if (chatId) await send(chatId, "⚠️ Beklenmeyen bir hata oluştu. Lütfen tekrar deneyin veya `/start` ile yeniden başlayın.", env);
+    } catch (_) { /* best-effort notification */ }
   }
 }
 
@@ -142,7 +154,7 @@ async function handleCallbackQuery(query, env) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ callback_query_id: query.id })
-  }).catch(() => {});
+  }).catch(e => console.error("❌ answerCallbackQuery failed:", e));
 
   // Butona basıldığında mevcut akışı sıfırla, komutu çalıştır
   await resetState(chatId, env);
@@ -187,20 +199,33 @@ async function handleList(chatId, env) {
     let message = "📋 *Aktif Hatırlatmaların:*\n\n";
 
     for (const key of list.keys) {
-      const data = JSON.parse(await env.REMINDERS.get(key.name));
-      if (data.sent && !data.hourlyActive) continue;
-      const date = new Date(data.targetTime);
-      const ds = `${date.getDate()}.${date.getMonth()+1}.${date.getFullYear()} ${date.getHours()}:${String(date.getMinutes()).padStart(2,'0')}`;
-      message += `🔹 *\`ID: ${key.name.split(':')[2]}\`*\n   📅 ${ds}${data.hourly ? ' 🔄' : ''}\n   📝 ${data.msg}\n\n`;
+      try {
+        const raw = await env.REMINDERS.get(key.name);
+        if (!raw) continue;
+        const data = JSON.parse(raw);
+        if (data.sent && !data.hourlyActive) continue;
+        const date = new Date(data.targetTime);
+        const ds = `${date.getDate()}.${date.getMonth()+1}.${date.getFullYear()} ${date.getHours()}:${String(date.getMinutes()).padStart(2,'0')}`;
+        message += `🔹 *\`ID: ${key.name.split(':')[2]}\`*\n   📅 ${ds}${data.hourly ? ' 🔄' : ''}\n   📝 ${data.msg}\n\n`;
+      } catch (e) {
+        console.error("❌ Corrupt reminder entry:", key.name, e);
+      }
     }
     for (const key of recurringList.keys) {
-      const data = JSON.parse(await env.REMINDERS.get(key.name));
-      message += `🔁 *\`ID: ${key.name.split(':')[2]}\`*\n   🗓️ Her ayın ${data.targetDay}. günü, ${data.targetTime}${data.hourly ? ' 🔄' : ''}\n   📝 ${data.msg}\n\n`;
+      try {
+        const raw = await env.REMINDERS.get(key.name);
+        if (!raw) continue;
+        const data = JSON.parse(raw);
+        message += `🔁 *\`ID: ${key.name.split(':')[2]}\`*\n   🗓️ Her ayın ${data.targetDay}. günü, ${data.targetTime}${data.hourly ? ' 🔄' : ''}\n   📝 ${data.msg}\n\n`;
+      } catch (e) {
+        console.error("❌ Corrupt recurring entry:", key.name, e);
+      }
     }
 
     message += `\n💡 *Silmek için:* \`/sil <ID>\` yaz`;
     return send(chatId, message, env);
   } catch (err) {
+    console.error("❌ handleList error:", err);
     return send(chatId, "⚠️ Liste yüklenirken hata oluştu.", env);
   }
 }
@@ -226,7 +251,9 @@ async function cleanupCountdownFlags(baseKey, env) {
   try {
     const flags = await env.REMINDERS.list({ prefix: `${baseKey}:cd` });
     for (const flag of flags.keys) await env.REMINDERS.delete(flag.name);
-  } catch (e) {}
+  } catch (e) {
+    console.error("❌ cleanupCountdownFlags failed for", baseKey, e);
+  }
 }
 
 // ── Başarılı ──────────────────────────────────────────────────────────────────
@@ -283,9 +310,15 @@ async function buildBrifingMessage(chatId, env) {
   const onceList = await env.REMINDERS.list({ prefix: `once:${chatId}:` });
   const upcoming = [];
   for (const key of onceList.keys) {
-    const data = JSON.parse(await env.REMINDERS.get(key.name));
-    if (!data.sent && data.targetTime > nowMs && data.targetTime <= nowMs + weekMs) {
-      upcoming.push(data);
+    try {
+      const raw = await env.REMINDERS.get(key.name);
+      if (!raw) continue;
+      const data = JSON.parse(raw);
+      if (!data.sent && data.targetTime > nowMs && data.targetTime <= nowMs + weekMs) {
+        upcoming.push(data);
+      }
+    } catch (e) {
+      console.error("❌ Corrupt briefing once entry:", key.name, e);
     }
   }
 
@@ -302,8 +335,14 @@ async function buildBrifingMessage(chatId, env) {
   const recList = await env.REMINDERS.list({ prefix: `rec:${chatId}:` });
   const recItems = [];
   for (const key of recList.keys) {
-    const data = JSON.parse(await env.REMINDERS.get(key.name));
-    if (data.targetDay >= day) recItems.push(data);
+    try {
+      const raw = await env.REMINDERS.get(key.name);
+      if (!raw) continue;
+      const data = JSON.parse(raw);
+      if (data.targetDay >= day) recItems.push(data);
+    } catch (e) {
+      console.error("❌ Corrupt briefing rec entry:", key.name, e);
+    }
   }
 
   if (recItems.length > 0) {
@@ -333,16 +372,22 @@ async function sendDailyBrifing(env) {
     if (key.name.split(':').length !== 2) continue; // sadece brifing:{chatId}
     const sentKey = `${key.name}:sent:${dateKey}`;
     if (await env.REMINDERS.get(sentKey)) continue;
-    const data = JSON.parse(await env.REMINDERS.get(key.name));
-    const msg  = await buildBrifingMessage(data.chatId, env);
-    await send(data.chatId, msg, env);
-    await env.REMINDERS.put(sentKey, '1', { expirationTtl: 86400 });
+    try {
+      const raw = await env.REMINDERS.get(key.name);
+      if (!raw) continue;
+      const data = JSON.parse(raw);
+      const msg  = await buildBrifingMessage(data.chatId, env);
+      await send(data.chatId, msg, env);
+      await env.REMINDERS.put(sentKey, '1', { expirationTtl: 86400 });
+    } catch (e) {
+      console.error("❌ sendDailyBrifing failed for", key.name, e);
+    }
   }
 }
 
 // ── Servis ısıtma ─────────────────────────────────────────────────────────────
 function warmupImageService(env) {
-  fetch(`${env.IMAGE_SERVICE_URL}/`).catch(() => {});
+  fetch(`${env.IMAGE_SERVICE_URL}/`).catch(e => console.error("❌ Image service warmup failed:", e));
 }
 
 // ── Story ─────────────────────────────────────────────────────────────────────
@@ -380,9 +425,17 @@ async function generateAndSendStory(storyText, chatId, env, photos, brand = "sel
       photoHeight = largest.height;
       const fileRes  = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/getFile?file_id=${largest.file_id}`);
       const fileData = await fileRes.json();
-      if (fileData.ok) {
+      if (fileData.ok && fileData.result?.file_path) {
         const photoRes = await fetch(`https://api.telegram.org/file/bot${env.BOT_TOKEN}/${fileData.result.file_path}`);
-        photoB64 = bufToB64(await photoRes.arrayBuffer());
+        if (!photoRes.ok) {
+          console.error("❌ Photo download failed:", photoRes.status);
+          await send(chatId, "⚠️ Fotoğraf indirilemedi, fotoğrafsız devam ediliyor.", env);
+        } else {
+          photoB64 = bufToB64(await photoRes.arrayBuffer());
+        }
+      } else {
+        console.error("❌ getFile failed:", JSON.stringify(fileData));
+        await send(chatId, "⚠️ Fotoğraf alınamadı, fotoğrafsız devam ediliyor.", env);
       }
     }
 
@@ -418,7 +471,17 @@ async function handleExifPhoto(chatId, state, env, photos) {
     const largest  = photos[photos.length - 1];
     const fileRes  = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/getFile?file_id=${largest.file_id}`);
     const fileData = await fileRes.json();
+    if (!fileData.ok || !fileData.result?.file_path) {
+      console.error("❌ EXIF getFile failed:", JSON.stringify(fileData));
+      await resetState(chatId, env);
+      return send(chatId, "⚠️ Fotoğraf alınamadı. Tekrar deneyin.", env);
+    }
     const photoRes = await fetch(`https://api.telegram.org/file/bot${env.BOT_TOKEN}/${fileData.result.file_path}`);
+    if (!photoRes.ok) {
+      console.error("❌ EXIF photo download failed:", photoRes.status);
+      await resetState(chatId, env);
+      return send(chatId, "⚠️ Fotoğraf indirilemedi. Tekrar deneyin.", env);
+    }
     const imageB64 = bufToB64(await photoRes.arrayBuffer());
 
     const imgRes = await fetch(`${env.IMAGE_SERVICE_URL}/exif`, {
@@ -582,7 +645,7 @@ async function runCron(env) {
     if (key.name.startsWith('user:') || key.name.startsWith('brifing:') || key.name.includes(':cd')) continue;
     let data;
     try { data = JSON.parse(await env.REMINDERS.get(key.name)); }
-    catch (e) { continue; }
+    catch (e) { console.error("❌ Corrupt cron entry:", key.name, e); continue; }
 
     if (data.type === "once") {
       if (!data.sent && data.targetTime <= now.getTime()) {
