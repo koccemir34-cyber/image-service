@@ -67,8 +67,9 @@ async function handleWebhook(update, env) {
       if (text.startsWith("/sil"))     return handleDelete(text, chatId, env);
       if (text === "/brifing")             return handleBrifingAktif(chatId, env);
       if (text === "/brifingkapat")        return handleBrifingKapat(chatId, env);
-      if (text === "/story" || text.startsWith("/story")) {
-        state = { step: STATES.STORY_TEXT, chatId };
+      if (text === "/story" || text === "/story_sk" || text === "/story_remaz") {
+        const brand = text === "/story_remaz" ? "remaz" : "selhattin";
+        state = { step: STATES.STORY_TEXT, chatId, brand };
         await saveState(chatId, state, env);
         warmupImageService(env);
         return send(chatId, "📝 *Story Oluştur*\n\nGörsel üzerine yazılacak metni girin:", env);
@@ -110,10 +111,11 @@ async function handleWebhook(update, env) {
 
 // ── Mesajlar ──────────────────────────────────────────────────────────────────
 async function sendStart(chatId, name, env) {
-  const text = `🤖 Merhaba *${name}*!\n\n🏗️ *Selhattin Koç İnşaat Taahhüt Botu*\n\nNe yapmak istersiniz?`;
+  const text = `🤖 Merhaba *${name}*!\n\nNe yapmak istersiniz?`;
   const keyboard = [
     [
-      { text: "📸 Story", callback_data: "/story" }
+      { text: "📸 SK Story",    callback_data: "/story_sk"    },
+      { text: "📸 Remaz Story", callback_data: "/story_remaz" }
     ],
     [
       { text: "⏰ Tek Hatırlatma",   callback_data: "/tekhatirlat"  },
@@ -364,12 +366,12 @@ async function handleStoryPhotoStep(text, chatId, state, env, photos) {
   if (!hasPhoto && !skip)
     return send(chatId, "📸 Fotoğraf gönderin veya *Hayır* yazın.", env);
   await resetState(chatId, env);
-  await generateAndSendStory(state.storyText, chatId, env, hasPhoto ? photos : null);
+  await generateAndSendStory(state.storyText, chatId, env, hasPhoto ? photos : null, state.brand || "selhattin");
 }
 
 // Ortak üretim fonksiyonu — 3 stili paralel üretip album olarak gönderir
-async function generateAndSendStory(storyText, chatId, env, photos) {
-  await send(chatId, "⏳ 3 farklı tasarım oluşturuluyor...", env);
+async function generateAndSendStory(storyText, chatId, env, photos, brand = "selhattin") {
+  await send(chatId, "⏳ Görsel oluşturuluyor...", env);
   try {
     let photoB64 = null, photoWidth = null, photoHeight = null;
     if (photos && photos.length > 0) {
@@ -384,33 +386,22 @@ async function generateAndSendStory(storyText, chatId, env, photos) {
       }
     }
 
-    const body = { text: storyText, photoB64, photoWidth, photoHeight };
-    const callApi = (style) => fetch(`${env.IMAGE_SERVICE_URL}/generate`, {
+    const imgRes = await fetch(`${env.IMAGE_SERVICE_URL}/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-secret': env.IMAGE_SECRET },
-      body: JSON.stringify({ ...body, style })
+      body: JSON.stringify({ text: storyText, photoB64, photoWidth, photoHeight, brand })
     });
-
-    const [r1, r2, r3] = await Promise.all([callApi('classic'), callApi('cinematic'), callApi('luxury')]);
-    if (!r1.ok || !r2.ok || !r3.ok) throw new Error(`Image service hata: ${r1.status} ${r2.status} ${r3.status}`);
-
-    const [buf1, buf2, buf3] = await Promise.all([r1.arrayBuffer(), r2.arrayBuffer(), r3.arrayBuffer()]);
+    if (!imgRes.ok) throw new Error(`Image service: ${imgRes.status}`);
+    const pngBuf = await imgRes.arrayBuffer();
 
     const form = new FormData();
-    form.append('chat_id', String(chatId));
-    form.append('klasik',     new Blob([buf1], { type: 'image/png' }), 'klasik.png');
-    form.append('sinematik',  new Blob([buf2], { type: 'image/png' }), 'sinematik.png');
-    form.append('luks',       new Blob([buf3], { type: 'image/png' }), 'luks.png');
-    form.append('media', JSON.stringify([
-      { type: 'document', media: 'attach://klasik',    caption: '1️⃣ Klasik'    },
-      { type: 'document', media: 'attach://sinematik', caption: '2️⃣ Sinematik' },
-      { type: 'document', media: 'attach://luks',      caption: '3️⃣ Lüks'      },
-    ]));
-
-    const tgRes = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/sendMediaGroup`, { method: 'POST', body: form });
+    form.append('chat_id',  String(chatId));
+    form.append('document', new Blob([pngBuf], { type: 'image/png' }), 'story.png');
+    form.append('caption',  "✅ Story görseliniz hazır!");
+    const tgRes = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/sendDocument`, { method: 'POST', body: form });
     if (!tgRes.ok) {
-      console.error("❌ sendMediaGroup error:", await tgRes.text());
-      await send(chatId, "⚠️ Görseller gönderilemedi. Tekrar deneyin.", env);
+      console.error("❌ sendDocument error:", await tgRes.text());
+      await send(chatId, "⚠️ Görsel gönderilemedi. Tekrar deneyin.", env);
     }
   } catch (err) {
     console.error("❌ STORY ERROR:", err);
