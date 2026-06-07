@@ -217,7 +217,7 @@ function segmentLine(text) {
 function displayLen(s) {
   let len = 0;
   for (const { segment } of graphemeSegmenter.segment(s)) {
-    len += isEmojiCluster(segment) ? 2 : segment.length;
+    len += isEmojiCluster(segment) ? 3 : segment.length;
   }
   return len;
 }
@@ -404,7 +404,7 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand, 
               `<image x="${Math.round(x)}" y="${Math.round(curY - eSz * 0.82)}" width="${Math.round(eSz)}" height="${Math.round(eSz)}" href="${dataUrl}"/>`
             );
           }
-          x += TEXT_FS * 1.1;
+          x += TEXT_FS * 1.4;
           continue;
         }
 
