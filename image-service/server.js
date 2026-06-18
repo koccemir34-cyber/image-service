@@ -50,14 +50,14 @@ app.post('/generate', async (req, res) => {
   if (SECRET && req.headers['x-secret'] !== SECRET)
     return res.status(401).json({ error: 'unauthorized' });
 
-  const { text, photoB64, photoWidth, photoHeight, brand } = req.body;
+  const { text, photoB64, photoWidth, photoHeight, brand, showEngagement } = req.body;
   if (!text) return res.status(400).json({ error: 'text required' });
   if (text.length > 600) return res.status(400).json({ error: 'text too long' });
 
   const brandCfg = BRANDS[brand] || BRANDS.selhattin;
 
   try {
-    const svg = await buildXPostSvg(text, photoB64 || null, photoWidth || null, photoHeight || null, brandCfg);
+    const svg = await buildXPostSvg(text, photoB64 || null, photoWidth || null, photoHeight || null, brandCfg, showEngagement !== false);
     const resvg = new Resvg(svg, {
       font: {
         loadSystemFonts: false,
@@ -217,7 +217,7 @@ function segmentLine(text) {
 function displayLen(s) {
   let len = 0;
   for (const { segment } of graphemeSegmenter.segment(s)) {
-    len += isEmojiCluster(segment) ? 2 : segment.length;
+    len += isEmojiCluster(segment) ? 3 : segment.length;
   }
   return len;
 }
@@ -245,7 +245,7 @@ function wrapText(text, max) {
 }
 
 // ── X-Post SVG ───────────────────────────────────────────────────────────────
-async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) {
+async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand, showEngagement = true) {
   const W = 1080;
   const BG = '#1c1c1e';
   const CARD_W = 900;
@@ -270,9 +270,9 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
 
   const TEXT_PAD_X  = CARD_X + 36;
   const TEXT_W      = CARD_W - 72;
-  const TEXT_FS     = 40;
-  const TEXT_LH     = 64;
-  const TEXT_MAX_CH = 42;
+  const TEXT_FS     = 32;
+  const TEXT_LH     = 50;
+  const TEXT_MAX_CH = 38;
 
   const PHOTO_H     = 420;
   const PHOTO_GAP   = 20;
@@ -290,13 +290,35 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
   const iconHeart   = 'M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z';
   const iconBookmark = 'M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8M16 6 12 2 8 6M12 2v13';
 
+  // ── Etiketleri ayır ──────────────────────────────────────────────
+  const hashtagRe = /#[\wçğıöşüÇĞİÖŞÜ]+/g;
+  const hashtags = [];
+  // Metindeki tüm hashtag'leri topla
+  let bodyText = rawText.replace(hashtagRe, (match) => {
+    hashtags.push(match);
+    return '';
+  });
+  // Temizle: çift boşlukları tek yap, satır sonu boşlukları sil
+  bodyText = bodyText.replace(/[ \t]+/g, ' ').replace(/ ?\n ?/g, '\n').trim();
+
   // ── Metin satırları ───────────────────────────────────────────────
-  const paragraphs = rawText.split('\n');
+  const paragraphs = bodyText.split('\n');
   const lines = [];
   for (let p = 0; p < paragraphs.length; p++) {
-    const wrapped = wrapText(paragraphs[p].trim(), TEXT_MAX_CH);
+    const trimmed = paragraphs[p].trim();
+    if (!trimmed && lines.length > 0) { lines.push({ text: '', isGap: true }); continue; }
+    if (!trimmed) continue;
+    const wrapped = wrapText(trimmed, TEXT_MAX_CH);
     for (const w of wrapped) lines.push({ text: w, isGap: false });
     if (p < paragraphs.length - 1) lines.push({ text: '', isGap: true });
+  }
+
+  // Etiketleri en sona ekle, her biri ayrı satırda
+  if (hashtags.length > 0) {
+    lines.push({ text: '', isGap: true });
+    for (const tag of hashtags) {
+      lines.push({ text: tag, isGap: false });
+    }
   }
 
   // Hashtag segment'leri
@@ -336,10 +358,10 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
   const photoY      = hasPhoto ? textEndY + photoGap : 0;
   const photoEndY   = hasPhoto ? photoY + actualPhotoH : textEndY;
 
-  const dateY       = photoEndY + 20;
+  const dateY       = photoEndY + 48;
   const divY        = dateY + 40;
-  const engY        = divY + 24;
-  const cardBottomY = engY + ENG_ICON_SZ + 40;
+  const engY        = showEngagement ? divY + 24 : 0;
+  const cardBottomY = showEngagement ? engY + ENG_ICON_SZ + 40 : divY + 24;
 
   // Kart boyunu hesapla
   const cardH = cardBottomY - cardY + 20;
@@ -382,7 +404,7 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
               `<image x="${Math.round(x)}" y="${Math.round(curY - eSz * 0.82)}" width="${Math.round(eSz)}" height="${Math.round(eSz)}" href="${dataUrl}"/>`
             );
           }
-          x += TEXT_FS * 1.1;
+          x += TEXT_FS * 1.4;
           continue;
         }
 
@@ -430,9 +452,9 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
           rx="${PHOTO_CLIP_R}" ry="${PHOTO_CLIP_R}" fill="none" stroke="${DIVIDER_CLR}" stroke-width="1"/>` : '';
 
   // ── Fake engagement sayıları ──────────────────────────────────────
-  const comments = randInt(5, 80);
-  const retweets = randInt(3, 40);
-  const likes    = randInt(50, 500);
+  const comments = showEngagement ? randInt(5, 80) : 0;
+  const retweets = showEngagement ? randInt(3, 40) : 0;
+  const likes    = showEngagement ? randInt(50, 500) : 0;
   const gapX = (CARD_W - 72 - ENG_ICON_SZ * 4) / 5;
   const engStartX = TEXT_PAD_X;
 
@@ -491,7 +513,7 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
   <line x1="${TEXT_PAD_X}" y1="${Math.round(divY)}" x2="${TEXT_PAD_X + CARD_W - 72}" y2="${Math.round(divY)}"
         stroke="${DIVIDER_CLR}" stroke-width="1.5"/>
 
-  <!-- Engagement Bar -->
+  ${showEngagement ? `<!-- Engagement Bar -->
   <!-- Yorum -->
   <g transform="translate(${engStartX}, ${Math.round(engY)})">
     <svg width="${ENG_ICON_SZ}" height="${ENG_ICON_SZ}" viewBox="0 0 24 24">
@@ -527,7 +549,7 @@ async function buildXPostSvg(rawText, photoB64, photoWidth, photoHeight, brand) 
     <svg width="${ENG_ICON_SZ}" height="${ENG_ICON_SZ}" viewBox="0 0 24 24">
       <path d="${iconBookmark}" fill="none" stroke="${ENG_CLR}" stroke-width="2"/>
     </svg>
-  </g>
+  </g>` : ''}
 
   <!-- Brand Watermark -->
   <text x="${W / 2}" y="${Math.round(wmY)}" text-anchor="middle"

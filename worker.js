@@ -12,6 +12,7 @@ const STATES = {
   REMINDER_HOURLY: 'reminder_hourly',
   STORY_TEXT: 'story_text',
   STORY_PHOTO: 'story_photo',
+  STORY_ENGAGEMENT: 'story_engagement',
   EXIF_PHOTO: 'exif_photo',
 };
 
@@ -108,6 +109,7 @@ async function handleWebhook(update, env) {
       case STATES.REMINDER_HOURLY:   return handleReminderHourly(text, chatId, state, env);
       case STATES.STORY_TEXT:        return handleStoryText(text, chatId, state, env);
       case STATES.STORY_PHOTO:       return handleStoryPhotoStep(text, chatId, state, env, photos);
+      case STATES.STORY_ENGAGEMENT: return handleStoryEngagement(text, chatId, state, env);
       case STATES.EXIF_PHOTO:        return handleExifPhoto(chatId, state, env, photos);
     }
 
@@ -404,26 +406,47 @@ async function handleStoryText(text, chatId, state, env) {
   return send(chatId, `✅ Metin kaydedildi.\n\n📸 Şimdi bir *fotoğraf gönderin* ya da fotoğrafsız devam etmek için *Hayır* yazın.`, env);
 }
 
-// Adım 2: fotoğraf al (ya da geç) ve üret
+// Adım 2.5: engagement sayıları gösterilsin mi?
+async function handleStoryEngagement(text, chatId, state, env) {
+  const yes = ['evet', 'e', 'yes', 'y'].includes(text.trim().toLowerCase());
+  const no  = ['hayır', 'hayir', 'h', 'no', 'n'].includes(text.trim().toLowerCase());
+  if (!yes && !no)
+    return send(chatId, "📊 Lütfen *Evet* veya *Hayır* yazın.", env);
+  state.showEngagement = yes;
+  await resetState(chatId, env);
+  const photoInfo = state.photoFileId ? { fileId: state.photoFileId, w: state.photoWidth, h: state.photoHeight } : null;
+  await generateAndSendStory(state.storyText, chatId, env, photoInfo, state.brand || "selhattin", state.showEngagement);
+}
+
+// Adım 2: fotoğraf al (ya da geç), engagement sorusuna geç
 async function handleStoryPhotoStep(text, chatId, state, env, photos) {
   const hasPhoto = photos && photos.length > 0;
   const skip     = ['hayır', 'hayir', 'h', 'geç', 'gec', 'atla', 'yok'].includes(text.trim().toLowerCase());
   if (!hasPhoto && !skip)
     return send(chatId, "📸 Fotoğraf gönderin veya *Hayır* yazın.", env);
-  await resetState(chatId, env);
-  await generateAndSendStory(state.storyText, chatId, env, hasPhoto ? photos : null, state.brand || "selhattin");
+
+  // Fotoğraf bilgisini state'e kaydet (download üretim sırasında yapılacak)
+  if (hasPhoto) {
+    const largest = photos[photos.length - 1];
+    state.photoFileId = largest.file_id;
+    state.photoWidth  = largest.width;
+    state.photoHeight = largest.height;
+  }
+
+  state.step = STATES.STORY_ENGAGEMENT;
+  await saveState(chatId, state, env);
+  return send(chatId, "📊 *Sayılar gözüksün mü?* (yorum, repost, beğeni)\n\n*Evet* / *Hayır*", env);
 }
 
-// Ortak üretim fonksiyonu — 3 stili paralel üretip album olarak gönderir
-async function generateAndSendStory(storyText, chatId, env, photos, brand = "selhattin") {
+// Ortak üretim fonksiyonu
+async function generateAndSendStory(storyText, chatId, env, photoInfo, brand = "selhattin", showEngagement = true) {
   await send(chatId, "⏳ Görsel oluşturuluyor...", env);
   try {
     let photoB64 = null, photoWidth = null, photoHeight = null;
-    if (photos && photos.length > 0) {
-      const largest = photos[photos.length - 1];
-      photoWidth  = largest.width;
-      photoHeight = largest.height;
-      const fileRes  = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/getFile?file_id=${largest.file_id}`);
+    if (photoInfo && photoInfo.fileId) {
+      photoWidth  = photoInfo.w;
+      photoHeight = photoInfo.h;
+      const fileRes  = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/getFile?file_id=${photoInfo.fileId}`);
       const fileData = await fileRes.json();
       if (fileData.ok && fileData.result?.file_path) {
         const photoRes = await fetch(`https://api.telegram.org/file/bot${env.BOT_TOKEN}/${fileData.result.file_path}`);
@@ -442,7 +465,7 @@ async function generateAndSendStory(storyText, chatId, env, photos, brand = "sel
     const imgRes = await fetch(`${env.IMAGE_SERVICE_URL}/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-secret': env.IMAGE_SECRET },
-      body: JSON.stringify({ text: storyText, photoB64, photoWidth, photoHeight, brand })
+      body: JSON.stringify({ text: storyText, photoB64, photoWidth, photoHeight, brand, showEngagement })
     });
     if (!imgRes.ok) throw new Error(`Image service: ${imgRes.status}`);
     const pngBuf = await imgRes.arrayBuffer();
