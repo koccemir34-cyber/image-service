@@ -9,6 +9,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const LOGO_SK_B64     = readFileSync(join(__dirname, 'logo_b64.txt'), 'utf8').trim();
 const LOGO_REMAZ_B64  = readFileSync(join(__dirname, 'logo_remaz_b64.txt'), 'utf8').trim();
 const SECRET          = process.env.IMAGE_SECRET || '';
+if (!SECRET) {
+  console.error('FATAL: IMAGE_SECRET env var is not set. Refusing to start without authentication.');
+  process.exit(1);
+}
 
 // ── Profile photos (JPEG, square 400x400+) ─────────────────────
 let PROFILE_SK_B64    = '';
@@ -40,12 +44,23 @@ const BRANDS = {
 const emojiCache = new Map();
 
 const app = express();
+
+// ── Security headers ────────────────────────────────────────────────────────
+app.use((req, res, next) => {
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('X-Frame-Options', 'DENY');
+  res.set('X-XSS-Protection', '0');
+  res.set('Referrer-Policy', 'no-referrer');
+  res.set('Content-Security-Policy', "default-src 'none'");
+  next();
+});
+
 app.use(express.json({ limit: '15mb' }));
 
-app.get('/', (_, res) => res.send('Image service active ✅ X-Post Design'));
+app.get('/', (_, res) => res.send('Image service active'));
 
 app.post('/generate', async (req, res) => {
-  if (SECRET && req.headers['x-secret'] !== SECRET)
+  if (req.headers['x-secret'] !== SECRET)
     return res.status(401).json({ error: 'unauthorized' });
 
   const { text, photoB64, photoWidth, photoHeight, brand } = req.body;
@@ -70,7 +85,7 @@ app.post('/generate', async (req, res) => {
     res.send(Buffer.from(png));
   } catch (e) {
     console.error('Generate error:', e);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -85,11 +100,13 @@ const CAMERA_PROFILES = [
 ];
 
 app.post('/exif', (req, res) => {
-  if (SECRET && req.headers['x-secret'] !== SECRET)
+  if (req.headers['x-secret'] !== SECRET)
     return res.status(401).json({ error: 'unauthorized' });
 
   const { imageB64 } = req.body;
   if (!imageB64) return res.status(400).json({ error: 'imageB64 required' });
+  if (typeof imageB64 !== 'string' || imageB64.length > 10_000_000)
+    return res.status(400).json({ error: 'imageB64 too large (max ~7.5 MB)' });
 
   let piexif;
   try {
@@ -158,7 +175,7 @@ app.post('/exif', (req, res) => {
     res.send(outBuf);
   } catch (e) {
     console.error('EXIF error:', e);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
