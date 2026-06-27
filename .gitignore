@@ -1,3 +1,5 @@
 node_modules/
-.claude/
-worker.js
+image-service/node_modules/
+.env
+.DS_Store
+.wrangler/

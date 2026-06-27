@@ -1,12 +1,13 @@
 {
-  "name": "telegram-hatirlatma-botu",
+  "name": "skstory-cloudflare-7x24",
+  "private": true,
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
   },
-  "dependencies": {
-    "@resvg/resvg-wasm": "^2.6.2"
+  "devDependencies": {
+    "wrangler": "^4.25.0"
   }
 }

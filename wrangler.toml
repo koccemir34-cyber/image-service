@@ -1,9 +1,16 @@
 name = "telegram-hatirlatma-botu"
 main = "worker.js"
-compatibility_date = "2024-09-23"
+compatibility_date = "2026-06-27"
 compatibility_flags = ["nodejs_compat"]
+workers_dev = true
 
 [[kv_namespaces]]
 binding = "REMINDERS"
 id = "1d4f7929d11f453c8e43b351323e239d"
 
+[triggers]
+# Render ücretsiz servisinin 15 dakikalık uykuya geçmesini önlemek için.
+crons = ["*/10 * * * *"]
+
+[vars]
+IMAGE_SERVICE_URL = "https://image-service-obab.onrender.com"

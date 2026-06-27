@@ -1,13 +1,17 @@
 {
-  "name": "image-service",
+  "name": "skstory-render-service",
+  "private": true,
   "version": "1.0.0",
-  "type": "module",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
+  "engines": {
+    "node": ">=18.18.0"
+  },
   "dependencies": {
-    "@resvg/resvg-js": "^2.6.2",
-    "express": "^4.18.2",
-    "piexifjs": "^1.0.6"
+    "express": "^4.21.2",
+    "sharp": "^0.33.5",
+    "twemoji": "^14.0.2"
   }
 }

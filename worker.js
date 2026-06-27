@@ -1,427 +1,425 @@
-const TELEGRAM_API = "https://api.telegram.org";
+const TELEGRAM_API = 'https://api.telegram.org';
+const MAX_TEXT_LENGTH = 950;
+const MAX_PHOTO_BYTES = 12 * 1024 * 1024;
 
-const STATES = {
-  IDLE: 'idle',
-  ONCE_DATE: 'once_date',
-  ONCE_TIME: 'once_time',
-  ONCE_MESSAGE: 'once_message',
-  ONCE_HOURLY: 'once_hourly',
-  RECURRING_DAY: 'recurring_day',
-  RECURRING_TIME: 'recurring_time',
-  RECURRING_MESSAGE: 'recurring_message',
-  REMINDER_HOURLY: 'reminder_hourly',
-  DELETE_CONFIRM: 'delete_confirm'
+const STEPS = {
+  STORY_TEXT: 'story_text',
+  STORY_PHOTO: 'story_photo',
+  SETTINGS_LIKES: 'settings_likes',
+  SETTINGS_COMMENTS: 'settings_comments',
+  SETTINGS_REPOSTS: 'settings_reposts'
 };
 
 export default {
-  async fetch(request, env, ctx) {
+  async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname === "/")     return new Response("🤖 Telegram Hatırlatma Botu Aktif ✅");
-    if (url.pathname === "/bot") {
-      const update = await request.json().catch(() => null);
-      if (update) ctx.waitUntil(handleWebhook(update, env));
-      return new Response("ok");
+
+    if (url.pathname === '/') {
+      return Response.json({ ok: true, service: 'SK Story webhook active' });
     }
-    if (url.pathname === "/cron") { await runCron(env); return new Response("✅ Cron çalıştı"); }
-    return new Response("404 Not Found", { status: 404 });
+
+    if (url.pathname === '/health') {
+      return Response.json({ ok: true, worker: 'skstory-cloudflare-7x24' });
+    }
+
+    if (url.pathname === '/bot' && request.method === 'POST') {
+      const webhookSecret = String(env.WEBHOOK_SECRET || '');
+      const incomingSecret = request.headers.get('X-Telegram-Bot-Api-Secret-Token') || '';
+
+      if (!webhookSecret || incomingSecret !== webhookSecret) {
+        return new Response('forbidden', { status: 403 });
+      }
+
+      const update = await request.json().catch(() => null);
+      if (!update) return new Response('bad request', { status: 400 });
+
+      // Keep the webhook request alive while the PNG is rendered. This avoids a
+      // short background-task deadline during an occasional Render cold start.
+      await handleUpdate(update, env);
+      return new Response('ok');
+    }
+
+    return new Response('not found', { status: 404 });
   },
 
-  async scheduled(event, env, ctx) {
-    await runCron(env);
+  async scheduled(_controller, env, ctx) {
+    // Render's free instance sleeps after inactivity. A ten-minute health ping
+    // keeps this existing image service warm while the Worker remains stateless.
+    ctx.waitUntil(warmImageService(env));
   }
 };
 
-// ── Webhook ───────────────────────────────────────────────────────────────────
-async function handleWebhook(update, env) {
+async function handleUpdate(update, env) {
   try {
-    if (!update.message) return;
+    const message = update?.message;
+    if (!message?.chat || !message?.from) return;
 
-    const chatId   = update.message.chat.id;
-    const text     = update.message.text?.trim() || "";
-    const name     = update.message.from?.first_name || "Kullanıcı";
-    const stateKey = `user:${chatId}:state`;
+    const chatId = String(message.chat.id);
+    const userId = String(message.from.id);
+    const key = `${chatId}:${userId}`;
+    const text = typeof message.text === 'string' ? message.text : '';
+    const normalizedText = normalize(text);
 
-    let state = { step: STATES.IDLE };
-    const saved = await env.REMINDERS.get(stateKey);
-    if (saved) state = JSON.parse(saved);
+    if (isCommand(normalizedText, '/start')) {
+      await clearSession(key, env);
+      return sendMessage(chatId, [
+        'Merhaba.',
+        '',
+        '/skstory yaz, metni gönder, ardından fotoğrafı gönder.',
+        'Fotoğraf yoksa “Foto yok” yaz.',
+        '',
+        'Etkileşim sayılarını ayarlamak için /ayarlar,',
+        'tekrar rastgele yapmak için /ayarlarsifirla yaz.'
+      ].join('\n'), env, removeKeyboard());
+    }
 
-    if (state.step === STATES.IDLE) {
-      if (text === "/start")           return send(chatId, startMessage(name), env);
-      if (text === "/yardim")          return send(chatId, helpMessage(), env);
-      if (text === "/liste")           return handleList(chatId, env);
-      if (text === "/basarili")        return handleBasarili(chatId, env);
-      if (text.startsWith("/sil"))     return handleDelete(text, chatId, env);
-      if (text.startsWith("/story"))   return handleStory(text, chatId, env);
+    if (isCancel(normalizedText)) {
+      await clearSession(key, env);
+      return sendMessage(chatId, 'İşlem iptal edildi.', env, removeKeyboard());
+    }
 
-      if (text === "/tekhatirlat") {
-        state = { step: STATES.ONCE_DATE, chatId };
-        await env.REMINDERS.put(stateKey, JSON.stringify(state));
-        return send(chatId, "📅 *Tek Seferlik Hatırlatma*\n\nLütfen tarihi girin:\n`GG.AA.YYYY` formatında\n\nÖrnek: `21.04.2026`", env);
+    if (isCommand(normalizedText, '/ayarlarsifirla') || isCommand(normalizedText, '/ayarlarsıfırla')) {
+      await env.REMINDERS.put(settingsKey(key), JSON.stringify({ mode: 'random', updatedAt: new Date().toISOString() }));
+      await clearSession(key, env);
+      return sendMessage(chatId, [
+        '🎲 Etkileşim ayarları sıfırlandı.',
+        '',
+        'Bundan sonraki görsellerde beğeni 80–10.000; yorum/yanıt ve repost ise 1–300 arasında daha doğal oranlarla rastgele üretilecek.'
+      ].join('\n'), env, removeKeyboard());
+    }
+
+    if (isCommand(normalizedText, '/ayarlar')) {
+      await saveSession(key, { flow: 'settings', step: STEPS.SETTINGS_LIKES }, env);
+      return sendMessage(chatId, [
+        '📊 Görsel etkileşim ayarları',
+        '',
+        '1/3 — Beğeni sayısı kaç olsun?',
+        '',
+        '0 ile 999.999 arasında bir sayı yaz.',
+        'Örnek: 2500, 10.000 veya 2.5K',
+        '',
+        'İptal için “İptal” veya /iptal yaz.'
+      ].join('\n'), env, oneTimeKeyboard([['İptal']]));
+    }
+
+    if (isCommandInvocation(text, '/skstory')) {
+      const immediateText = commandRemainder(text, '/skstory');
+
+      if (immediateText) {
+        if (immediateText.length > MAX_TEXT_LENGTH) {
+          return sendMessage(chatId, `Metin çok uzun. En fazla ${MAX_TEXT_LENGTH} karakter olabilir.`, env);
+        }
+
+        await saveSession(key, { flow: 'story', step: STEPS.STORY_PHOTO, text: immediateText }, env);
+        return sendMessage(chatId, 'Metni aldım. Fotoğraf varsa şimdi gönder. Yoksa “Foto yok” yaz.', env, oneTimeKeyboard([['Foto yok'], ['İptal']]));
       }
-      if (text === "/herhatirlat") {
-        state = { step: STATES.RECURRING_DAY, chatId };
-        await env.REMINDERS.put(stateKey, JSON.stringify(state));
-        return send(chatId, "🔁 *Aylık Tekrarlı Hatırlatma*\n\nHer ayın hangi gününde hatırlatayım?\n\nSadece gün numarası girin (1-31):\nÖrnek: `15`", env);
-      }
 
-      return send(chatId, "📋 Komutlar için `/start` yazın", env);
+      await saveSession(key, { flow: 'story', step: STEPS.STORY_TEXT }, env);
+      return sendMessage(chatId, [
+        'SK Story için metni gönder.',
+        '',
+        'Gönderdiğin satır ve paragraf düzeni görselde mümkün olduğunca korunur.'
+      ].join('\n'), env, oneTimeKeyboard([['İptal']]));
     }
 
-    switch (state.step) {
-      case STATES.ONCE_DATE:         return handleOnceDate(text, chatId, state, env);
-      case STATES.ONCE_TIME:         return handleOnceTime(text, chatId, state, env);
-      case STATES.ONCE_MESSAGE:      return handleOnceMessage(text, chatId, state, env);
-      case STATES.ONCE_HOURLY:       return handleOnceHourly(text, chatId, state, env);
-      case STATES.RECURRING_DAY:     return handleRecurringDay(text, chatId, state, env);
-      case STATES.RECURRING_TIME:    return handleRecurringTime(text, chatId, state, env);
-      case STATES.RECURRING_MESSAGE: return handleRecurringMessage(text, chatId, state, env);
-      case STATES.REMINDER_HOURLY:   return handleReminderHourly(text, chatId, state, env);
-      case STATES.DELETE_CONFIRM:    return resetState(chatId, env).then(() => send(chatId, "🔄 İşlem iptal edildi.", env));
+    const session = await getSession(key, env);
+
+    if (!session) {
+      return sendMessage(chatId, 'Görsel oluşturmak için /skstory yaz. Etkileşim sayılarını ayarlamak için /ayarlar yaz.', env);
     }
 
-    return send(chatId, "⚠️ Beklenmeyen durum. `/start` ile yeniden başlayın.", env);
-  } catch (err) {
-    console.error("❌ WEBHOOK ERROR:", err);
+    if (session.flow === 'settings') {
+      return handleSettingsInput({ chatId, key, text, session, env });
+    }
+
+    if (session.flow === 'story') {
+      return handleStoryInput({ chatId, key, message, text, normalizedText, session, env });
+    }
+  } catch (error) {
+    console.error('Webhook error:', error);
   }
 }
 
-// ── Mesajlar ──────────────────────────────────────────────────────────────────
-function startMessage(name) {
-  return `
-🤖 Merhaba *${name}*!
+async function handleSettingsInput({ chatId, key, text, session, env }) {
+  const value = parseCount(text);
 
-🏗️ *Selhattin Koç İnşaat Taahhüt Botu*
+  if (value === null) {
+    return sendMessage(chatId, 'Geçerli bir sayı yaz. 0 ile 999.999 arasında olmalı. Örnek: 2500, 10.000 veya 2.5K', env);
+  }
 
-📋 *Kullanılabilir Komutlar:*
-/yardim - Yardım mesajı
-/tekhatirlat - Tek seferlik hatırlatma oluştur
-/herhatirlat - Her ay tekrar eden hatırlatma oluştur
-/liste - Tüm hatırlatmalarını listele
-/story - Instagram hikaye görseli oluştur
-  `.trim();
+  if (session.step === STEPS.SETTINGS_LIKES) {
+    await saveSession(key, { flow: 'settings', step: STEPS.SETTINGS_COMMENTS, likes: value }, env);
+    return sendMessage(chatId, `❤️ Beğeni: ${formatCount(value)}\n\n2/3 — Yorum / yanıt sayısı kaç olsun?\n\nÖrnek: 85`, env);
+  }
+
+  if (session.step === STEPS.SETTINGS_COMMENTS) {
+    await saveSession(key, { flow: 'settings', step: STEPS.SETTINGS_REPOSTS, likes: session.likes, comments: value }, env);
+    return sendMessage(chatId, `💬 Yorum / yanıt: ${formatCount(value)}\n\n3/3 — Repost sayısı kaç olsun?\n\nÖrnek: 34`, env);
+  }
+
+  if (session.step === STEPS.SETTINGS_REPOSTS) {
+    const settings = {
+      mode: 'manual',
+      likes: session.likes,
+      comments: session.comments,
+      reposts: value,
+      updatedAt: new Date().toISOString()
+    };
+
+    await env.REMINDERS.put(settingsKey(key), JSON.stringify(settings));
+    await clearSession(key, env);
+
+    return sendMessage(chatId, [
+      '✅ Etkileşim ayarları kaydedildi.',
+      '',
+      `❤️ Beğeni: ${formatCount(settings.likes)}`,
+      `💬 Yorum / yanıt: ${formatCount(settings.comments)}`,
+      `🔁 Repost: ${formatCount(settings.reposts)}`,
+      '',
+      'Yeni oluşturacağın tüm SK Story görsellerinde bu sayılar kullanılacak.'
+    ].join('\n'), env, removeKeyboard());
+  }
 }
 
-function helpMessage() {
-  return `
-📌 */tekhatirlat* — Tek seferlik hatırlatma
-📌 */herhatirlat* — Aylık tekrarlı hatırlatma
-📌 */liste* — Hatırlatmaları listele
-📌 */sil <ID>* — Hatırlatma sil
-📌 */basarili* — Saat başı hatırlatmayı durdur
+async function handleStoryInput({ chatId, key, message, text, normalizedText, session, env }) {
+  if (session.step === STEPS.STORY_TEXT) {
+    const storyText = text.trim();
 
-📌 */story* Kullanımı:
-\`/story Yazınız burada\`
+    if (!storyText) return sendMessage(chatId, 'Metin boş olamaz. Tekrar yaz.', env);
+    if (storyText.length > MAX_TEXT_LENGTH) return sendMessage(chatId, `Metin çok uzun. En fazla ${MAX_TEXT_LENGTH} karakter olabilir.`, env);
 
-Örnek:
-\`/story Bugün harika bir iş çıkardık!\`
+    await saveSession(key, { flow: 'story', step: STEPS.STORY_PHOTO, text: storyText }, env);
+    return sendMessage(chatId, 'Metni aldım. Fotoğraf varsa şimdi gönder. Yoksa “Foto yok” yaz.', env, oneTimeKeyboard([['Foto yok'], ['İptal']]));
+  }
 
-Çok satırlı yazı için Shift+Enter ile satır atlayabilirsiniz.
-  `.trim();
+  if (session.step !== STEPS.STORY_PHOTO) return;
+
+  if (isNoPhoto(normalizedText)) {
+    return generateAndSend({ chatId, key, storyText: session.text, photo: null, env });
+  }
+
+  const file = getImageFile(message);
+
+  if (!file) {
+    if (message.document && !String(message.document.mime_type || '').startsWith('image/')) {
+      return sendMessage(chatId, 'Bu dosya görsel değil. PNG/JPG olarak gönder.', env);
+    }
+
+    return sendMessage(chatId, 'Fotoğraf gönderebilirsin. Fotoğraf yoksa “Foto yok” yaz.', env);
+  }
+
+  if (Number(file.file_size || 0) > MAX_PHOTO_BYTES) {
+    return sendMessage(chatId, 'Fotoğraf çok büyük. En fazla 12 MB görsel gönder.', env);
+  }
+
+  return generateAndSend({ chatId, key, storyText: session.text, photo: file, env });
 }
 
-// ── Liste ─────────────────────────────────────────────────────────────────────
-async function handleList(chatId, env) {
+async function generateAndSend({ chatId, key, storyText, photo, env }) {
   try {
-    const list          = await env.REMINDERS.list({ prefix: `once:${chatId}:` });
-    const recurringList = await env.REMINDERS.list({ prefix: `rec:${chatId}:` });
-    const allReminders  = [...list.keys, ...recurringList.keys];
+    await sendChatAction(chatId, 'upload_photo', env);
+    await sendMessage(chatId, '⏳ SK Story hazırlanıyor...', env, removeKeyboard());
 
-    if (allReminders.length === 0)
-      return send(chatId, "📭 *Henüz hiç hatırlatman yok!*\n\n/tekhatirlat veya /herhatirlat ile oluşturabilirsin.", env);
+    const [photoB64, engagementSettings] = await Promise.all([
+      photo ? downloadTelegramPhoto(photo.file_id, env) : Promise.resolve(null),
+      getEngagementSettings(key, env)
+    ]);
 
-    let message = "📋 *Aktif Hatırlatmaların:*\n\n";
-
-    for (const key of list.keys) {
-      const data = JSON.parse(await env.REMINDERS.get(key.name));
-      if (data.sent && !data.hourlyActive) continue;
-      const date = new Date(data.targetTime);
-      const ds = `${date.getDate()}.${date.getMonth()+1}.${date.getFullYear()} ${date.getHours()}:${String(date.getMinutes()).padStart(2,'0')}`;
-      message += `🔹 *\`ID: ${key.name.split(':')[2]}\`*\n   📅 ${ds}${data.hourly ? ' 🔄' : ''}\n   📝 ${data.msg}\n\n`;
-    }
-    for (const key of recurringList.keys) {
-      const data = JSON.parse(await env.REMINDERS.get(key.name));
-      message += `🔁 *\`ID: ${key.name.split(':')[2]}\`*\n   🗓️ Her ayın ${data.targetDay}. günü, ${data.targetTime}${data.hourly ? ' 🔄' : ''}\n   📝 ${data.msg}\n\n`;
-    }
-
-    message += `\n💡 *Silmek için:* \`/sil <ID>\` yaz`;
-    return send(chatId, message, env);
-  } catch (err) {
-    return send(chatId, "⚠️ Liste yüklenirken hata oluştu.", env);
-  }
-}
-
-// ── Sil ───────────────────────────────────────────────────────────────────────
-async function handleDelete(text, chatId, env) {
-  const reminderId = text.replace('/sil', '').trim();
-  if (!reminderId) return send(chatId, "❌ *Kullanım:* `/sil <ID>`", env);
-
-  for (const prefix of [`once:${chatId}:`, `rec:${chatId}:`]) {
-    const key  = prefix + reminderId;
-    const data = await env.REMINDERS.get(key);
-    if (data) {
-      await env.REMINDERS.delete(key);
-      await cleanupCountdownFlags(key, env);
-      return send(chatId, `✅ *\`${reminderId}\`* silindi. 🗑️`, env);
-    }
-  }
-  return send(chatId, `❌ *\`${reminderId}\`* bulunamadı. /liste ile kontrol et.`, env);
-}
-
-async function cleanupCountdownFlags(baseKey, env) {
-  try {
-    const flags = await env.REMINDERS.list({ prefix: `${baseKey}:cd` });
-    for (const flag of flags.keys) await env.REMINDERS.delete(flag.name);
-  } catch (e) {}
-}
-
-// ── Başarılı ──────────────────────────────────────────────────────────────────
-async function handleBasarili(chatId, env) {
-  const onceList = await env.REMINDERS.list({ prefix: `once:${chatId}:` });
-  const recList  = await env.REMINDERS.list({ prefix: `rec:${chatId}:` });
-  let confirmed  = 0;
-
-  for (const key of [...onceList.keys, ...recList.keys]) {
-    const raw = await env.REMINDERS.get(key.name);
-    if (!raw) continue;
-    const data = JSON.parse(raw);
-    if (data.awaitingConfirmation) {
-      data.awaitingConfirmation = false;
-      data.hourlyActive = false;
-      await env.REMINDERS.put(key.name, JSON.stringify(data));
-      confirmed++;
-    }
-  }
-
-  return confirmed > 0
-    ? send(chatId, "✅ *Tamamlandı!* Saat başı hatırlatma durduruldu. 👍", env)
-    : send(chatId, "⚠️ Şu an onay bekleyen aktif hatırlatma yok.", env);
-}
-
-// ── Story ─────────────────────────────────────────────────────────────────────
-async function handleStory(text, chatId, env) {
-  const storyText = text.replace(/^\/story\s*/i, '').trim();
-  if (!storyText)
-    return send(chatId, "❌ *Kullanım:* `/story Yazınız burada`\n\nÖrnek: `/story Bugün harika bir iş çıkardık!`", env);
-
-  await send(chatId, "⏳ Görsel oluşturuluyor...", env);
-
-  try {
-    const imgRes = await fetch(`${env.IMAGE_SERVICE_URL}/generate`, {
+    const response = await fetch(`${String(env.IMAGE_SERVICE_URL).replace(/\/$/, '')}/generate`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-secret': env.IMAGE_SECRET
+        'x-secret': String(env.IMAGE_SECRET || '')
       },
-      body: JSON.stringify({ text: storyText })
+      body: JSON.stringify({
+        text: storyText,
+        photoB64,
+        engagementSettings
+      })
     });
 
-    if (!imgRes.ok) throw new Error(`Image service: ${imgRes.status}`);
-
-    const pngBuf = await imgRes.arrayBuffer();
-    const form = new FormData();
-    form.append('chat_id', String(chatId));
-    form.append('photo', new Blob([pngBuf], { type: 'image/png' }), 'story.png');
-
-    const tgRes = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/sendPhoto`, {
-      method: 'POST',
-      body: form
-    });
-
-    if (!tgRes.ok) {
-      console.error("❌ sendPhoto error:", await tgRes.text());
-      return send(chatId, "⚠️ Görsel gönderilemedi. Tekrar deneyin.", env);
-    }
-  } catch (err) {
-    console.error("❌ STORY ERROR:", err);
-    return send(chatId, "⚠️ Görsel oluşturulurken hata oluştu.", env);
-  }
-
-  return new Response("ok");
-}
-
-// ── Tek seferlik hatırlatma akışı ─────────────────────────────────────────────
-async function handleOnceDate(text, chatId, state, env) {
-  const match = text.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
-  if (!match) return send(chatId, "❌ *Format Hatalı!* `GG.AA.YYYY` — Örnek: `21.04.2026`", env);
-  const [, day, month, year] = match.map(Number);
-  const date = new Date(year, month - 1, day);
-  if (isNaN(date.getTime()) || date.getDate() !== day || date.getMonth() !== month - 1)
-    return send(chatId, "❌ *Geçersiz Tarih!*", env);
-  state.parsedDate = { day, month, year };
-  state.step = STATES.ONCE_TIME;
-  await saveState(chatId, state, env);
-  return send(chatId, `✅ Tarih: *${day}.${month}.${year}*\n\n⏰ Saati girin: \`SS:DD\` — Örnek: \`14:30\``, env);
-}
-
-async function handleOnceTime(text, chatId, state, env) {
-  const match = text.match(/^(\d{1,2}):(\d{2})$/);
-  if (!match) return send(chatId, "❌ *Format Hatalı!* `SS:DD` — Örnek: `14:30`", env);
-  const [, hour, minute] = match.map(Number);
-  if (hour > 23 || minute > 59) return send(chatId, "❌ *Geçersiz Saat!* 00-23 / 00-59 arası olmalı.", env);
-  state.parsedTime = { hour, minute, string: `${hour}:${String(minute).padStart(2,'0')}` };
-  state.step = STATES.ONCE_MESSAGE;
-  await saveState(chatId, state, env);
-  return send(chatId, `✅ Saat: *${state.parsedTime.string}*\n\n📝 Hatırlatılacak mesajı yazın:`, env);
-}
-
-async function handleOnceMessage(text, chatId, state, env) {
-  if (!text || text.length < 3) return send(chatId, "❌ Mesaj en az 3 karakter olmalı.", env);
-  state.message = text;
-  state.step = STATES.ONCE_HOURLY;
-  await saveState(chatId, state, env);
-  return send(chatId, `✅ Mesaj: *${text}*\n\n🔄 Saat başı hatırlatayım mı? \`E\` / \`H\``, env);
-}
-
-async function handleOnceHourly(text, chatId, state, env) {
-  const hourly = text.trim().toUpperCase() === 'E';
-  const { day, month, year } = state.parsedDate;
-  const { hour, minute }     = state.parsedTime;
-  const remindDate = new Date(year, month - 1, day, hour, minute);
-  if (remindDate < new Date()) {
-    await resetState(chatId, env);
-    return send(chatId, "❌ *Geçmiş tarih!* Lütfen yeni bir hatırlatma oluşturun.", env);
-  }
-  const reminderId = cryptoRandomId(8);
-  await env.REMINDERS.put(`once:${chatId}:${reminderId}`, JSON.stringify({
-    type: "once", chatId, msg: state.message,
-    targetTime: remindDate.getTime(), hourly, sent: false, createdAt: Date.now()
-  }));
-  await resetState(chatId, env);
-  return send(chatId, `✅ *Hatırlatma Kuruldu!*\n🆔 \`${reminderId}\`\n📅 ${day}.${month}.${year} ${hour}:${String(minute).padStart(2,'0')}\n📝 ${state.message}${hourly ? '\n🔄 Saat başı: *AKTİF*' : ''}`, env);
-}
-
-// ── Tekrarlı hatırlatma akışı ─────────────────────────────────────────────────
-async function handleRecurringDay(text, chatId, state, env) {
-  const day = parseInt(text);
-  if (!day || day < 1 || day > 31) return send(chatId, "❌ 1-31 arası bir sayı girin.", env);
-  state.targetDay = day;
-  state.step = STATES.RECURRING_TIME;
-  await saveState(chatId, state, env);
-  return send(chatId, `✅ Her ayın *${day}.* günü\n\n⏰ Saati girin: \`SS:DD\` — Örnek: \`10:00\``, env);
-}
-
-async function handleRecurringTime(text, chatId, state, env) {
-  const match = text.match(/^(\d{1,2}):(\d{2})$/);
-  if (!match) return send(chatId, "❌ *Format Hatalı!* `SS:DD` — Örnek: `10:00`", env);
-  const [, hour, minute] = match.map(Number);
-  if (hour > 23 || minute > 59) return send(chatId, "❌ *Geçersiz Saat!*", env);
-  state.parsedTime = { hour, minute, string: `${hour}:${String(minute).padStart(2,'0')}` };
-  state.step = STATES.RECURRING_MESSAGE;
-  await saveState(chatId, state, env);
-  return send(chatId, `✅ Saat: *${state.parsedTime.string}*\n\n📝 Hatırlatılacak mesajı yazın:`, env);
-}
-
-async function handleRecurringMessage(text, chatId, state, env) {
-  if (!text || text.length < 3) return send(chatId, "❌ Mesaj en az 3 karakter olmalı.", env);
-  state.message = text;
-  state.step = STATES.REMINDER_HOURLY;
-  await saveState(chatId, state, env);
-  return send(chatId, `✅ Mesaj: *${text}*\n\n🔄 Saat başı hatırlatayım mı? \`E\` / \`H\``, env);
-}
-
-async function handleReminderHourly(text, chatId, state, env) {
-  const hourly = text.trim().toUpperCase() === 'E';
-  const reminderId = cryptoRandomId(8);
-  await env.REMINDERS.put(`rec:${chatId}:${reminderId}`, JSON.stringify({
-    type: "recurring", chatId, msg: state.message,
-    targetDay: state.targetDay, targetTime: state.parsedTime.string,
-    hourly, lastSent: null, createdAt: Date.now()
-  }));
-  await resetState(chatId, env);
-  return send(chatId, `✅ *Aylık Hatırlatma Kuruldu!*\n🆔 \`${reminderId}\`\n🔁 Her ayın ${state.targetDay}. günü ${state.parsedTime.string}\n📝 ${state.message}${hourly ? '\n🔄 Saat başı: *AKTİF*' : ''}\n⚠️ 2 gün ve 1 gün öncesinde otomatik ön hatırlatma!`, env);
-}
-
-// ── State yönetimi ────────────────────────────────────────────────────────────
-async function saveState(chatId, state, env) {
-  await env.REMINDERS.put(`user:${chatId}:state`, JSON.stringify(state));
-}
-async function resetState(chatId, env) {
-  await env.REMINDERS.delete(`user:${chatId}:state`);
-}
-function cryptoRandomId(len) {
-  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  let r = '';
-  for (let i = 0; i < len; i++) r += chars[Math.floor(Math.random() * chars.length)];
-  return r;
-}
-
-// ── Cron ──────────────────────────────────────────────────────────────────────
-async function runCron(env) {
-  const list         = await env.REMINDERS.list();
-  const now          = new Date();
-  const today        = now.getDate();
-  const currentMonth = now.getMonth();
-  const currentYear  = now.getFullYear();
-  const nowMinutes   = now.getHours() * 60 + now.getMinutes();
-  const todayStr     = now.toDateString();
-
-  for (const key of list.keys) {
-    if (key.name.startsWith('user:') || key.name.includes(':cd')) continue;
-    let data;
-    try { data = JSON.parse(await env.REMINDERS.get(key.name)); }
-    catch (e) { continue; }
-
-    if (data.type === "once") {
-      if (!data.sent && data.targetTime <= now.getTime()) {
-        const msg = data.hourly
-          ? `⏰ ${data.msg}\n\n🔔 Tamamlandıysa */basarili* yazın, yoksa saatte bir hatırlatmaya devam edeceğim.`
-          : `⏰ ${data.msg}`;
-        await send(data.chatId, msg, env);
-        data.sent = true;
-        if (data.hourly) { data.hourlyActive = true; data.awaitingConfirmation = true; data.lastHourlyAt = Date.now(); }
-        await env.REMINDERS.put(key.name, JSON.stringify(data));
-      }
-      if (data.hourlyActive && data.awaitingConfirmation && Date.now() - (data.lastHourlyAt || 0) >= 3600000) {
-        await send(data.chatId, `🔄 ${data.msg}\n\n🔔 Tamamlandıysa */basarili* yazın.`, env);
-        data.lastHourlyAt = Date.now();
-        await env.REMINDERS.put(key.name, JSON.stringify(data));
-      }
+    if (!response.ok) {
+      throw new Error(`Image service ${response.status}: ${await response.text()}`);
     }
 
-    if (data.type === "recurring") {
-      const [tH, tM]     = data.targetTime.split(':').map(Number);
-      const targetMinutes = tH * 60 + tM;
-
-      if (data.targetDay > 2 && today === data.targetDay - 2) {
-        const fk = `${key.name}:cd2:${currentYear}-${currentMonth}`;
-        if (!(await env.REMINDERS.get(fk))) { await send(data.chatId, `📅 *2 gün kaldı:* ${data.msg}`, env); await env.REMINDERS.put(fk, "1"); }
-      }
-      if (data.targetDay > 1 && today === data.targetDay - 1) {
-        const fk = `${key.name}:cd1:${currentYear}-${currentMonth}`;
-        if (!(await env.REMINDERS.get(fk))) { await send(data.chatId, `📅 *1 gün kaldı:* ${data.msg}`, env); await env.REMINDERS.put(fk, "1"); }
-      }
-
-      if (today === data.targetDay) {
-        if (nowMinutes >= targetMinutes && data.lastSent !== todayStr) {
-          const msg = data.hourly
-            ? `🔁 ${data.msg}\n\n🔔 Tamamlandıysa */basarili* yazın, yoksa saatte bir hatırlatmaya devam edeceğim.`
-            : `🔁 ${data.msg}`;
-          await send(data.chatId, msg, env);
-          data.lastSent = todayStr;
-          if (data.hourly) { data.hourlyActive = true; data.awaitingConfirmation = true; data.lastHourlyAt = Date.now(); }
-          await env.REMINDERS.put(key.name, JSON.stringify(data));
-        }
-        if (data.hourly && data.hourlyActive && data.awaitingConfirmation && Date.now() - (data.lastHourlyAt || 0) >= 3600000) {
-          await send(data.chatId, `🔄 ${data.msg}\n\n🔔 Tamamlandıysa */basarili* yazın.`, env);
-          data.lastHourlyAt = Date.now();
-          await env.REMINDERS.put(key.name, JSON.stringify(data));
-        }
-      }
-    }
+    const image = await response.arrayBuffer();
+    await sendPhoto(chatId, image, env);
+    await clearSession(key, env);
+  } catch (error) {
+    console.error('Generate error:', error);
+    await clearSession(key, env);
+    await sendMessage(chatId, '⚠️ Görsel oluşturulurken hata oluştu. Birkaç dakika sonra tekrar dene.', env, removeKeyboard());
   }
 }
 
-// ── Telegram send ─────────────────────────────────────────────────────────────
-async function send(chatId, text, env) {
+async function downloadTelegramPhoto(fileId, env) {
+  const metaRes = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/getFile?file_id=${encodeURIComponent(fileId)}`);
+  const meta = await metaRes.json();
+
+  if (!meta?.ok || !meta?.result?.file_path) {
+    throw new Error('Telegram fotoğraf bağlantısı alınamadı.');
+  }
+
+  const photoRes = await fetch(`${TELEGRAM_API}/file/bot${env.BOT_TOKEN}/${meta.result.file_path}`);
+  if (!photoRes.ok) throw new Error(`Telegram fotoğraf indirilemedi: ${photoRes.status}`);
+
+  const bytes = new Uint8Array(await photoRes.arrayBuffer());
+  if (bytes.byteLength > MAX_PHOTO_BYTES) throw new Error('Fotoğraf boyutu sınırı aşıyor.');
+
+  return bytesToBase64(bytes);
+}
+
+async function getEngagementSettings(key, env) {
+  const raw = await env.REMINDERS.get(settingsKey(key));
+  if (!raw) return null;
+
   try {
-    const res = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text, parse_mode: "Markdown" })
-    });
-    if (!res.ok) console.error("❌ Telegram API Error:", await res.text());
-  } catch (e) {
-    console.error("❌ SEND ERROR:", e);
+    const data = JSON.parse(raw);
+    return data?.mode === 'manual' || data?.mode === 'random' ? data : null;
+  } catch {
+    return null;
   }
-  return new Response("ok");
+}
+
+async function getSession(key, env) {
+  const raw = await env.REMINDERS.get(sessionKey(key));
+  if (!raw) return null;
+
+  try { return JSON.parse(raw); } catch { return null; }
+}
+
+async function saveSession(key, data, env) {
+  await env.REMINDERS.put(sessionKey(key), JSON.stringify(data), { expirationTtl: 7200 });
+}
+
+async function clearSession(key, env) {
+  await env.REMINDERS.delete(sessionKey(key));
+}
+
+function sessionKey(key) { return `skstory:session:${key}`; }
+function settingsKey(key) { return `skstory:engagement:${key}`; }
+
+function commandRemainder(text, command) {
+  const expression = new RegExp(`^${escapeRegExp(command)}(?:@[A-Za-z0-9_]+)?(?:\\s+|$)`, 'iu');
+  return String(text || '').replace(expression, '').trim();
+}
+
+function isCommand(text, command) {
+  return new RegExp(`^${escapeRegExp(command)}(?:@[A-Za-z0-9_]+)?\\s*$`, 'iu').test(String(text || '').trim());
+}
+
+function isCommandInvocation(text, command) {
+  return new RegExp(`^${escapeRegExp(command)}(?:@[A-Za-z0-9_]+)?(?:\\s|$)`, 'iu').test(String(text || '').trim());
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function normalize(value) {
+  return String(value || '').trim().toLocaleLowerCase('tr-TR');
+}
+
+function isCancel(text) {
+  return ['iptal', '/iptal', 'cancel', '/cancel'].includes(text);
+}
+
+function isNoPhoto(text) {
+  return ['foto yok', 'fotoğraf yok', 'resim yok', 'yok', 'geç', 'skip'].includes(text);
+}
+
+function getImageFile(message) {
+  if (Array.isArray(message.photo) && message.photo.length) return message.photo[message.photo.length - 1];
+  if (message.document && String(message.document.mime_type || '').startsWith('image/')) return message.document;
+  return null;
+}
+
+function parseCount(input) {
+  const raw = String(input || '').trim().replace(/\s+/g, '');
+  if (!raw) return null;
+
+  let value = null;
+  if (/^\d+$/.test(raw)) value = Number(raw);
+  else if (/^\d{1,3}(?:\.\d{3})+$/.test(raw)) value = Number(raw.replace(/\./g, ''));
+  else if (/^\d{1,3}(?:,\d{3})+$/.test(raw)) value = Number(raw.replace(/,/g, ''));
+  else {
+    const compact = raw.match(/^(\d+(?:[.,]\d+)?)\s*([kKbB])$/u);
+    if (compact) value = Math.round(Number(compact[1].replace(',', '.')) * 1000);
+  }
+
+  return Number.isSafeInteger(value) && value >= 0 && value <= 999999 ? value : null;
+}
+
+function formatCount(value) {
+  const count = Number(value) || 0;
+  if (count >= 1000) {
+    const thousand = count / 1000;
+    return `${thousand.toFixed(thousand >= 10 ? 0 : 1).replace('.0', '')} B`;
+  }
+  return String(count);
+}
+
+function bytesToBase64(bytes) {
+  let binary = '';
+  const chunk = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunk));
+  }
+  return btoa(binary);
+}
+
+async function warmImageService(env) {
+  try {
+    const response = await fetch(`${String(env.IMAGE_SERVICE_URL).replace(/\/$/, '')}/health`, {
+      headers: { 'x-secret': String(env.IMAGE_SECRET || '') },
+      cf: { cacheTtl: 0, cacheEverything: false }
+    });
+    if (!response.ok) console.warn('Image service warm-up returned', response.status);
+  } catch (error) {
+    console.warn('Image service warm-up failed:', error?.message || error);
+  }
+}
+
+async function sendMessage(chatId, text, env, replyMarkup = null) {
+  const body = { chat_id: chatId, text };
+  if (replyMarkup) body.reply_markup = replyMarkup;
+  return telegramApi('sendMessage', body, env);
+}
+
+async function sendChatAction(chatId, action, env) {
+  return telegramApi('sendChatAction', { chat_id: chatId, action }, env);
+}
+
+async function sendPhoto(chatId, image, env) {
+  const form = new FormData();
+  form.append('chat_id', String(chatId));
+  form.append('photo', new Blob([image], { type: 'image/png' }), 'skstory.png');
+  form.append('caption', '✅ SK Story hazır.');
+
+  const response = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/sendPhoto`, {
+    method: 'POST',
+    body: form
+  });
+
+  if (!response.ok) throw new Error(`Telegram sendPhoto ${response.status}: ${await response.text()}`);
+}
+
+async function telegramApi(method, payload, env) {
+  const response = await fetch(`${TELEGRAM_API}/bot${env.BOT_TOKEN}/${method}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    console.error(`Telegram ${method} error:`, await response.text());
+  }
+}
+
+function oneTimeKeyboard(rows) {
+  return { keyboard: rows, resize_keyboard: true, one_time_keyboard: true };
+}
+
+function removeKeyboard() {
+  return { remove_keyboard: true };
 }
