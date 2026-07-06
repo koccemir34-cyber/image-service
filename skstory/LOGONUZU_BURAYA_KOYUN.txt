@@ -1,0 +1,8 @@
+SK Story profil fotoğrafı / logosu için bu klasöre şu adlardan biriyle görsel koyun:
+- profile.jpg (önerilen)
+- profile.png
+- logo.jpg
+- logo.png
+
+En temiz sonuç için kare, en az 400x400 piksel bir logo kullanın.
+Bu dosyayı silmeniz gerekmez; sistem yalnızca görsel dosyalarını okur.
