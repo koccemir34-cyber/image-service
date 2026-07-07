@@ -1,6 +1,8 @@
 'use strict';
 
 const path = require('path');
+process.chdir(__dirname);
+
 const express = require('express');
 const sharp = require('sharp');
 const {
@@ -10,153 +12,157 @@ const {
   collectPhotoBuffers
 } = require('./brand-runtime');
 
-// Render service root'u image-service olabilir; tasarım kodu ve yerel logo yolları
-// her durumda bu klasöre göre çözülür.
-process.chdir(__dirname);
-
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
-const IMAGE_SECRET = String(process.env.IMAGE_SECRET || '').trim();
+const IMAGE_SECRET = String(process.env.IMAGE_SECRET || '');
 const MAX_TEXT_LENGTH = 950;
-const STORY_MODULE = path.join(__dirname, 'story.js');
+const STORY_MODULE_PATH = require.resolve('./story');
 
+// Four Telegram photos can be considerably larger after Base64 encoding.
 app.disable('x-powered-by');
-app.use(express.json({ limit: '72mb' }));
-
-// story.js içindeki CONFIG modül yüklenirken process.env'den okunuyor. Aynı anda gelen
-// SK/Remaz istekleri birbirine karışmasın diye marka render işlemleri sıraya alınır.
-let renderQueue = Promise.resolve();
-
-function enqueueRender(task) {
-  const previous = renderQueue.catch(() => {});
-  let release;
-  renderQueue = new Promise((resolve) => { release = resolve; });
-  return previous.then(task).finally(release);
-}
+app.use(express.json({ limit: '70mb' }));
 
 function isAuthorized(req) {
-  return !IMAGE_SECRET || String(req.get('x-secret') || '').trim() === IMAGE_SECRET;
+  return !IMAGE_SECRET || req.get('x-secret') === IMAGE_SECRET;
 }
 
-function setEnv(name, value, snapshot) {
-  snapshot[name] = Object.prototype.hasOwnProperty.call(process.env, name)
-    ? process.env[name]
-    : undefined;
-  process.env[name] = String(value || '');
+function normalizeText(value) {
+  return typeof value === 'string' ? value.trim() : '';
 }
 
-function restoreEnv(snapshot) {
-  for (const [name, original] of Object.entries(snapshot)) {
-    if (original === undefined) delete process.env[name];
-    else process.env[name] = original;
-  }
+function getMosaicPreset(layoutMode, photoCount) {
+  const count = Math.max(2, Math.min(4, Number(photoCount) || 2));
+  const normalWide = layoutMode === 'normal_16_4';
+
+  return {
+    width: 1600,
+    height: normalWide ? 500 : 520,
+    padding: 14,
+    gap: count >= 3 ? 12 : 16,
+    outerBackground: { r: 255, g: 255, b: 255, alpha: 1 },
+    panelBackground: { r: 241, g: 244, b: 247, alpha: 1 }
+  };
 }
 
-async function makeVerticalPhotoStack(buffers) {
-  if (!Array.isArray(buffers) || buffers.length < 2) return buffers?.[0] || null;
-
-  const tileWidth = 1600;
-  const tileHeight = 410;
-  const gap = 18;
-  const tiles = [];
-
-  for (const buffer of buffers) {
-    const blurred = await sharp(buffer)
-      .rotate()
-      .resize(tileWidth, tileHeight, { fit: 'cover', position: 'centre' })
-      .blur(14)
-      .modulate({ brightness: 0.86, saturation: 0.84 })
-      .png()
-      .toBuffer();
-
-    const contained = await sharp(buffer)
-      .rotate()
-      .resize(tileWidth, tileHeight, {
-        fit: 'contain',
-        position: 'centre',
-        background: { r: 0, g: 0, b: 0, alpha: 0 }
-      })
-      .png()
-      .toBuffer();
-
-    tiles.push(await sharp(blurred)
-      .composite([{ input: contained, left: 0, top: 0 }])
-      .png()
-      .toBuffer());
-  }
-
-  const height = (tileHeight * tiles.length) + (gap * (tiles.length - 1));
-  return sharp({
-    create: {
-      width: tileWidth,
+async function makePanel(buffer, width, height, background) {
+  return sharp(buffer)
+    .rotate()
+    .resize({
+      width,
       height,
-      channels: 4,
-      background: { r: 255, g: 255, b: 255, alpha: 1 }
-    }
-  })
-    .composite(tiles.map((input, index) => ({
-      input,
-      left: 0,
-      top: index * (tileHeight + gap)
-    })))
+      fit: 'contain',
+      background
+    })
+    .flatten({ background })
     .png()
     .toBuffer();
 }
 
-async function resolvePhotoBuffer(body) {
-  const buffers = collectPhotoBuffers(body);
-  if (!buffers.length) return null;
-  if (buffers.length === 1) return buffers[0];
-  return makeVerticalPhotoStack(buffers);
+// The existing story renderer accepts one photoBuffer. Multiple photos are
+// converted into one wide image with equal vertical panels before it reaches story.js.
+async function buildVerticalPhotoStack(photoBuffers, layoutMode = 'smart_adaptive') {
+  const source = Array.isArray(photoBuffers) ? photoBuffers.filter(Boolean).slice(0, 4) : [];
+  if (!source.length) return null;
+  if (source.length === 1) return source[0];
+
+  const preset = getMosaicPreset(layoutMode, source.length);
+  const { width, height, padding, gap, outerBackground, panelBackground } = preset;
+  const panelWidth = width - (padding * 2);
+  const panelHeight = Math.floor((height - (padding * 2) - (gap * (source.length - 1))) / source.length);
+
+  const panels = await Promise.all(
+    source.map((buffer) => makePanel(buffer, panelWidth, panelHeight, panelBackground))
+  );
+
+  const composite = panels.map((input, index) => ({
+    input,
+    left: padding,
+    top: padding + (index * (panelHeight + gap))
+  }));
+
+  return sharp({
+    create: {
+      width,
+      height,
+      channels: 4,
+      background: outerBackground
+    }
+  })
+    .composite(composite)
+    .png()
+    .toBuffer();
 }
 
-async function renderStory({ body, text }) {
-  const brand = resolveBrand(body);
-  const logoPath = await materializeProfileLogo(__dirname, brand);
-  const photoBuffer = await resolvePhotoBuffer(body);
-  const engagementSettings = normalizeEngagementSettings(body.engagementSettings);
+let renderQueue = Promise.resolve();
 
+function enqueueRender(task) {
+  const next = renderQueue.then(task, task);
+  renderQueue = next.catch(() => {});
+  return next;
+}
+
+async function renderWithBrand(brand, input) {
   return enqueueRender(async () => {
-    const snapshot = {};
+    const envKeys = [
+      'PROFILE_NAME',
+      'PROFILE_HANDLE',
+      'FOOTER_TITLE',
+      'FOOTER_URL',
+      'LOGO_PATH'
+    ];
+
+    const previous = {};
+    for (const key of envKeys) {
+      previous[key] = Object.prototype.hasOwnProperty.call(process.env, key)
+        ? process.env[key]
+        : undefined;
+    }
+
+    const logoPath = await materializeProfileLogo(__dirname, brand);
 
     try {
-      setEnv('PROFILE_NAME', brand.profileName, snapshot);
-      setEnv('PROFILE_HANDLE', brand.profileHandle, snapshot);
-      setEnv('FOOTER_TITLE', brand.footerTitle, snapshot);
-      setEnv('FOOTER_URL', brand.footerUrl, snapshot);
-      if (logoPath) setEnv('LOGO_PATH', logoPath, snapshot);
+      process.env.PROFILE_NAME = brand.profileName;
+      process.env.PROFILE_HANDLE = brand.profileHandle;
+      process.env.FOOTER_TITLE = brand.footerTitle;
+      process.env.FOOTER_URL = brand.footerUrl;
 
-      delete require.cache[require.resolve(STORY_MODULE)];
-      const { makeSkStory } = require(STORY_MODULE);
+      if (logoPath) {
+        process.env.LOGO_PATH = logoPath;
+      } else {
+        delete process.env.LOGO_PATH;
+      }
 
-      return await makeSkStory({
-        text,
-        photoBuffer,
-        engagementSettings
-      });
+      // story.js reads its configuration while it is required. Reload it for
+      // every queued brand render so SK Story and Remaz Story never mix.
+      delete require.cache[STORY_MODULE_PATH];
+      const { makeSkStory } = require('./story');
+
+      return makeSkStory(input);
     } finally {
-      delete require.cache[require.resolve(STORY_MODULE)];
-      restoreEnv(snapshot);
+      delete require.cache[STORY_MODULE_PATH];
+
+      for (const key of envKeys) {
+        if (previous[key] === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = previous[key];
+        }
+      }
     }
   });
 }
 
 app.get('/', (_req, res) => {
-  res.type('text/plain').send('SK Story + Remaz Story render service active');
+  res.type('text/plain').send('SK Story render service active');
 });
 
 app.get('/health', (_req, res) => {
   res.json({
     ok: true,
-    service: 'sk-remaz-image-service-v11.5',
+    service: 'skstory-render-v11.6-multiphoto',
     renderer: 'sharp',
-    dynamicBrands: ['skstory', 'remazstory'],
-    remazBrand: {
-      profileName: 'Remaz İnşaat',
-      profileHandle: '@remazinsaat',
-      footerTitle: 'REMAZ İNŞAAT',
-      footerUrl: 'remazinsaat.web.app'
-    },
+    multiPhoto: true,
+    maxPhotos: 4,
     timestamp: new Date().toISOString()
   });
 });
@@ -166,24 +172,39 @@ app.post('/generate', async (req, res) => {
     return res.status(401).json({ error: 'unauthorized' });
   }
 
-  const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
-  if (!text) return res.status(400).json({ error: 'text required' });
+  const text = normalizeText(req.body?.text);
+  if (!text) {
+    return res.status(400).json({ error: 'text required' });
+  }
+
   if (text.length > MAX_TEXT_LENGTH) {
     return res.status(400).json({ error: `text too long (max ${MAX_TEXT_LENGTH})` });
   }
 
   try {
     const brand = resolveBrand(req.body || {});
-    const png = await renderStory({ body: req.body || {}, text });
+    const engagementSettings = normalizeEngagementSettings(req.body?.engagementSettings);
+    const photoLayoutMode = normalizeText(req.body?.photoLayoutMode) || 'smart_adaptive';
+    const photoBuffers = collectPhotoBuffers(req.body || {});
+    const photoBuffer = await buildVerticalPhotoStack(photoBuffers, photoLayoutMode);
+
+    const png = await renderWithBrand(brand, {
+      text,
+      photoBuffer,
+      engagementSettings
+    });
 
     res.setHeader('Content-Type', 'image/png');
     res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('X-Renderer-Version', 'sk-remaz-image-service-v11.5');
-    res.setHeader('X-Story-Brand', brand.id);
+    res.setHeader('X-Renderer-Version', 'skstory-render-v11.6-multiphoto');
+    res.setHeader('X-Photo-Count', String(photoBuffers.length));
     return res.send(png);
   } catch (error) {
-    console.error('Render error:', error?.stack || error);
-    return res.status(500).json({ error: 'render failed' });
+    console.error('Render error:', error);
+    return res.status(500).json({
+      error: 'render failed',
+      message: String(error?.message || error || 'unknown error')
+    });
   }
 });
 
@@ -191,8 +212,11 @@ app.use((_req, res) => res.status(404).json({ error: 'not found' }));
 
 if (require.main === module) {
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`SK + Remaz image service v11.5 listening on ${PORT}`);
+    console.log(`SK Story render service listening on ${PORT}`);
   });
 }
 
-module.exports = { app, resolvePhotoBuffer, renderStory };
+module.exports = {
+  app,
+  buildVerticalPhotoStack
+};

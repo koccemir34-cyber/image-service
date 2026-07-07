@@ -10,16 +10,16 @@ const MAX_PHOTO_BYTES = 12 * 1024 * 1024;
 const BRAND_DEFAULTS = Object.freeze({
   skstory: Object.freeze({
     id: 'skstory',
-    profileName: 'Selhattin Koç',
+    profileName: 'Selhattin Ko\u00e7',
     profileHandle: '@selhattinkocinsaat',
-    footerTitle: 'SELHATTİN KOÇ İNŞAAT',
+    footerTitle: 'SELHATT\u0130N KO\u00c7 \u0130N\u015eAAT',
     footerUrl: 'selhattinkoc.web.app'
   }),
   remazstory: Object.freeze({
     id: 'remazstory',
-    profileName: 'Remaz İnşaat',
+    profileName: 'Remaz \u0130n\u015faat',
     profileHandle: '@remazinsaat',
-    footerTitle: 'REMAZ İNŞAAT',
+    footerTitle: 'REMAZ \u0130N\u015eAAT',
     footerUrl: 'remazinsaat.web.app'
   })
 });
@@ -43,29 +43,46 @@ function resolveBrand(body = {}) {
   const nested = body && typeof body.brand === 'object' && body.brand ? body.brand : {};
   const id = normalizeBrandId(firstText(body.brandId, nested.id, body.brand));
   const defaults = BRAND_DEFAULTS[id];
-
-  // Marka kimliği Worker tarafından belirlenir. Remaz için gelen yanlış/boş alanların
-  // eski Selhattin Koç metnine geri dönmesine izin verilmez.
-  const fixed = id === 'remazstory';
-  const profileName = fixed
-    ? defaults.profileName
-    : firstText(body.profileDisplayName, body.profileName, nested.profileDisplayName, nested.profileName, body.authorName, nested.authorName, defaults.profileName);
-  const profileHandle = fixed
-    ? defaults.profileHandle
-    : firstText(body.profileUsername, body.accountHandle, body.username, nested.profileUsername, nested.accountHandle, nested.username, defaults.profileHandle);
-  const footerTitle = fixed
-    ? defaults.footerTitle
-    : firstText(body.footerBrandText, body.footerTitle, body.watermarkName, nested.footerBrandText, nested.footerTitle, nested.watermarkName, defaults.footerTitle);
-  const footerUrl = fixed
-    ? defaults.footerUrl
-    : firstText(body.footerWebsiteText, body.footerSite, body.websiteUrl, nested.footerWebsiteText, nested.footerSite, nested.websiteUrl, defaults.footerUrl);
+  const remaz = id === 'remazstory';
 
   return {
     id,
-    profileName,
-    profileHandle,
-    footerTitle,
-    footerUrl,
+    profileName: remaz ? defaults.profileName : firstText(
+      body.profileDisplayName,
+      body.profileName,
+      nested.profileDisplayName,
+      nested.profileName,
+      body.authorName,
+      nested.authorName,
+      defaults.profileName
+    ),
+    profileHandle: remaz ? defaults.profileHandle : firstText(
+      body.profileUsername,
+      body.accountHandle,
+      body.username,
+      nested.profileUsername,
+      nested.accountHandle,
+      nested.username,
+      defaults.profileHandle
+    ),
+    footerTitle: remaz ? defaults.footerTitle : firstText(
+      body.footerBrandText,
+      body.footerTitle,
+      body.watermarkName,
+      nested.footerBrandText,
+      nested.footerTitle,
+      nested.watermarkName,
+      defaults.footerTitle
+    ),
+    footerUrl: remaz ? defaults.footerUrl : firstText(
+      body.footerWebsiteText,
+      body.footerSite,
+      body.websiteUrl,
+      nested.footerWebsiteText,
+      nested.footerSite,
+      nested.websiteUrl,
+      defaults.footerUrl
+    ),
     profileImageB64: firstText(body.profileImageB64, nested.profileImageB64),
     profileImageMimeType: firstText(body.profileImageMimeType, nested.profileImageMimeType),
     profileImageFileName: firstText(body.profileImageFileName, nested.profileImageFileName)
@@ -80,13 +97,14 @@ function base64ToBuffer(value, maxBytes, label) {
 
   if (!normalized) return null;
   if (!/^[A-Za-z0-9+/]+={0,2}$/.test(normalized)) {
-    throw new Error(`${label} base64 biçimi geçersiz.`);
+    throw new Error(`${label} base64 is invalid.`);
   }
 
   const buffer = Buffer.from(normalized, 'base64');
   if (!buffer.length || buffer.length > maxBytes) {
-    throw new Error(`${label} boyutu desteklenen sınırı aşıyor.`);
+    throw new Error(`${label} exceeds the allowed size.`);
   }
+
   return buffer;
 }
 
@@ -128,11 +146,12 @@ async function findLocalLogo(serviceRoot, brandId) {
     const found = await fileExists(candidate);
     if (found) return found;
   }
+
   return null;
 }
 
 async function materializeProfileLogo(serviceRoot, brand) {
-  const fromRequest = base64ToBuffer(brand.profileImageB64, MAX_PROFILE_BYTES, 'Profil görseli');
+  const fromRequest = base64ToBuffer(brand.profileImageB64, MAX_PROFILE_BYTES, 'Profile image');
   if (!fromRequest) return findLocalLogo(serviceRoot, brand.id);
 
   const cacheDir = path.join('/tmp', 'sk-remaz-story-profiles');
@@ -158,7 +177,9 @@ function normalizeEngagementSettings(value) {
 
   const toCount = (item) => {
     const number = Number(item);
-    return Number.isFinite(number) && number >= 0 && number <= 999999 ? Math.round(number) : 0;
+    return Number.isFinite(number) && number >= 0 && number <= 999999
+      ? Math.round(number)
+      : 0;
   };
 
   return {
@@ -171,6 +192,7 @@ function normalizeEngagementSettings(value) {
 
 function collectPhotoBuffers(body = {}) {
   const candidates = [];
+
   const push = (item) => {
     if (typeof item !== 'string' || !item.trim()) return;
     if (!candidates.includes(item)) candidates.push(item);
@@ -180,7 +202,9 @@ function collectPhotoBuffers(body = {}) {
   if (Array.isArray(body.photoB64s)) body.photoB64s.forEach(push);
   push(body.photoB64);
 
-  return candidates.slice(0, 4).map((item) => base64ToBuffer(item, MAX_PHOTO_BYTES, 'Fotoğraf'));
+  return candidates
+    .slice(0, 4)
+    .map((item) => base64ToBuffer(item, MAX_PHOTO_BYTES, 'Photo'));
 }
 
 module.exports = {
