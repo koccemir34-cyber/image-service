@@ -238,28 +238,42 @@ async function materializeCombinedLogo(serviceRoot, participants) {
     .update(buffers[1].buffer)
     .digest('hex')
     .slice(0, 20);
-  const output = path.join(cacheDir, `ortak-${hash}.png`);
+  const output = path.join(cacheDir, `ortak-compact-${hash}.png`);
 
   try {
     await fs.access(output);
     return output;
   } catch {}
 
-  const size = 96;
-  const canvasWidth = 248;
-  const canvasHeight = 96;
-  const iconSvg = Buffer.from(`
-    <svg width="40" height="40" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
-      <circle cx="20" cy="20" r="18" fill="#0f172a"/>
-      <path d="M16 13h10v10" stroke="#ffffff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M24 13L14 23" stroke="#ffffff" stroke-width="3" fill="none" stroke-linecap="round"/>
-      <path d="M24 27H14V17" stroke="#ffffff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M16 27l10-10" stroke="#ffffff" stroke-width="3" fill="none" stroke-linecap="round"/>
+  const canvasSize = 140;
+  const logoSize = 44;
+  const centerSize = 52;
+  const leftX = 10;
+  const rightX = canvasSize - logoSize - 10;
+  const logoY = Math.round((canvasSize - logoSize) / 2);
+  const centerX = Math.round((canvasSize - centerSize) / 2);
+  const centerY = Math.round((canvasSize - centerSize) / 2);
+
+  const containerSvg = Buffer.from(`
+    <svg width="${canvasSize}" height="${canvasSize}" viewBox="0 0 ${canvasSize} ${canvasSize}" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="${canvasSize / 2}" cy="${canvasSize / 2}" r="${(canvasSize / 2) - 3}" fill="#ffffff" stroke="#e5e7eb" stroke-width="2"/>
+    </svg>
+  `);
+
+  const centerBadgeSvg = Buffer.from(`
+    <svg width="${centerSize}" height="${centerSize}" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="32" cy="32" r="30" fill="#0f172a"/>
+      <circle cx="32" cy="32" r="29" fill="none" stroke="#c7a24a" stroke-width="2" opacity="0.95"/>
+      <path d="M22 22h20v20" stroke="#ffffff" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M42 22L20 44" stroke="#ffffff" stroke-width="4" fill="none" stroke-linecap="round"/>
+      <path d="M22 42h20V22" stroke="#ffffff" stroke-width="0" fill="none"/>
+      <path d="M42 42H22V22" stroke="#ffffff" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.95"/>
+      <path d="M22 42l22-22" stroke="#ffffff" stroke-width="4" fill="none" stroke-linecap="round" opacity="0.95"/>
     </svg>
   `);
 
   const makeLogo = (buffer) => sharp(buffer)
-    .resize({ width: size, height: size, fit: 'contain', background: { r: 255, g: 255, b: 255, alpha: 0 } })
+    .resize({ width: logoSize, height: logoSize, fit: 'contain', background: { r: 255, g: 255, b: 255, alpha: 0 } })
     .png()
     .toBuffer();
 
@@ -267,16 +281,17 @@ async function materializeCombinedLogo(serviceRoot, participants) {
 
   await sharp({
     create: {
-      width: canvasWidth,
-      height: canvasHeight,
+      width: canvasSize,
+      height: canvasSize,
       channels: 4,
-      background: { r: 255, g: 255, b: 255, alpha: 1 }
+      background: { r: 255, g: 255, b: 255, alpha: 0 }
     }
   })
     .composite([
-      { input: leftLogo, left: 0, top: 0 },
-      { input: rightLogo, left: 152, top: 0 },
-      { input: iconSvg, left: 104, top: 28 }
+      { input: containerSvg, left: 0, top: 0 },
+      { input: leftLogo, left: leftX, top: logoY },
+      { input: rightLogo, left: rightX, top: logoY },
+      { input: centerBadgeSvg, left: centerX, top: centerY }
     ])
     .png()
     .toFile(output);
