@@ -182,18 +182,20 @@ function escapeXml(value) {
 function dualHeaderSvg(firstName, firstHandle, secondName, secondHandle) {
   return Buffer.from(
     `<svg width="1080" height="1920" xmlns="http://www.w3.org/2000/svg">
-      <!-- Original single-profile texts are hidden before the two-profile header is redrawn. -->
-      <rect x="218" y="192" width="640" height="112" rx="8" fill="#ffffff"/>
+      <!-- Clear the entire original one-profile header and draw the shared header from scratch. -->
+      <rect x="210" y="188" width="670" height="122" fill="#ffffff"/>
+
       <text x="226" y="246" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700" fill="#0f172a">${escapeXml(firstName)}</text>
       <text x="226" y="279" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" fill="#6b7280">${escapeXml(firstHandle)}</text>
-      <!-- Repost-style connector icon: no circle, just two clean arrows -->
-      <g transform="translate(437 230)">
-        <path d="M2 14h26l-6-6" fill="none" stroke="#4b5563" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
-        <path d="M22 8l7 7-7 7" fill="none" stroke="#4b5563" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
-        <path d="M34 28H8l6 6" fill="none" stroke="#4b5563" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
-        <path d="M14 22l-7 7 7 7" fill="none" stroke="#4b5563" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" transform="translate(0,-8)" opacity="0"/>
-        <path d="M14 21l-7 7 7 7" fill="none" stroke="#4b5563" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+
+      <!-- Plain X-style repost connector. No circle, no background, no gold border. -->
+      <g transform="translate(465 233)" fill="none" stroke="#536471" stroke-width="3.3" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2 11h26l-6-6"/>
+        <path d="M22 5l6 6-6 6"/>
+        <path d="M30 27H4l6 6"/>
+        <path d="M10 21l-6 6 6 6"/>
       </g>
+
       <text x="590" y="246" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700" fill="#0f172a">${escapeXml(secondName)}</text>
       <text x="590" y="279" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" fill="#6b7280">${escapeXml(secondHandle)}</text>
     </svg>`
@@ -280,7 +282,7 @@ app.get('/', (_req, res) => {
 app.get('/health', (_req, res) => {
   res.json({
     ok: true,
-    service: 'skstory-render-v12.1-repost-connector',
+    service: 'skstory-render-v12.2-plain-repost',
     renderer: 'sharp',
     multiPhoto: true,
     ortakHeader: 'two-separate-avatars-clean',
@@ -305,7 +307,7 @@ app.post('/generate', async (req, res) => {
 
     res.setHeader('Content-Type', 'image/png');
     res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('X-Renderer-Version', 'skstory-render-v12.1-repost-connector');
+    res.setHeader('X-Renderer-Version', 'skstory-render-v12.2-plain-repost');
     res.setHeader('X-Photo-Count', String(photoBuffers.length));
     return res.send(png);
   } catch (error) {
