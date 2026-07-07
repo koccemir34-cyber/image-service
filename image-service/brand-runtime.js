@@ -238,42 +238,51 @@ async function materializeCombinedLogo(serviceRoot, participants) {
     .update(buffers[1].buffer)
     .digest('hex')
     .slice(0, 20);
-  const output = path.join(cacheDir, `ortak-compact-${hash}.png`);
+  const output = path.join(cacheDir, `ortak-avatar-${hash}.png`);
 
   try {
     await fs.access(output);
     return output;
   } catch {}
 
-  const canvasSize = 140;
-  const logoSize = 44;
-  const centerSize = 52;
-  const leftX = 10;
-  const rightX = canvasSize - logoSize - 10;
-  const logoY = Math.round((canvasSize - logoSize) / 2);
+  const canvasSize = 256;
+  const sideBgSize = 88;
+  const sideLogoSize = 64;
+  const centerSize = 104;
+  const leftBgX = 10;
+  const rightBgX = canvasSize - sideBgSize - 10;
+  const sideBgY = Math.round((canvasSize - sideBgSize) / 2);
+  const leftLogoX = leftBgX + Math.round((sideBgSize - sideLogoSize) / 2);
+  const rightLogoX = rightBgX + Math.round((sideBgSize - sideLogoSize) / 2);
+  const sideLogoY = sideBgY + Math.round((sideBgSize - sideLogoSize) / 2);
   const centerX = Math.round((canvasSize - centerSize) / 2);
   const centerY = Math.round((canvasSize - centerSize) / 2);
 
-  const containerSvg = Buffer.from(`
-    <svg width="${canvasSize}" height="${canvasSize}" viewBox="0 0 ${canvasSize} ${canvasSize}" xmlns="http://www.w3.org/2000/svg">
-      <circle cx="${canvasSize / 2}" cy="${canvasSize / 2}" r="${(canvasSize / 2) - 3}" fill="#ffffff" stroke="#e5e7eb" stroke-width="2"/>
+  const sideCircle = (size) => Buffer.from(`
+    <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="${size / 2}" cy="${size / 2}" r="${(size / 2) - 2}" fill="#ffffff" stroke="#dbe2ea" stroke-width="2"/>
     </svg>
   `);
 
   const centerBadgeSvg = Buffer.from(`
-    <svg width="${centerSize}" height="${centerSize}" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
-      <circle cx="32" cy="32" r="30" fill="#0f172a"/>
-      <circle cx="32" cy="32" r="29" fill="none" stroke="#c7a24a" stroke-width="2" opacity="0.95"/>
-      <path d="M22 22h20v20" stroke="#ffffff" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M42 22L20 44" stroke="#ffffff" stroke-width="4" fill="none" stroke-linecap="round"/>
-      <path d="M22 42h20V22" stroke="#ffffff" stroke-width="0" fill="none"/>
-      <path d="M42 42H22V22" stroke="#ffffff" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.95"/>
-      <path d="M22 42l22-22" stroke="#ffffff" stroke-width="4" fill="none" stroke-linecap="round" opacity="0.95"/>
+    <svg width="${centerSize}" height="${centerSize}" viewBox="0 0 104 104" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="g" x1="0" x2="1" y1="0" y2="1">
+          <stop offset="0%" stop-color="#0f172a"/>
+          <stop offset="100%" stop-color="#1e293b"/>
+        </linearGradient>
+      </defs>
+      <circle cx="52" cy="52" r="49" fill="url(#g)"/>
+      <circle cx="52" cy="52" r="47" fill="none" stroke="#d4af37" stroke-width="3" opacity="0.95"/>
+      <path d="M35 34h34v34" stroke="#ffffff" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M69 35L31 73" stroke="#ffffff" stroke-width="6" fill="none" stroke-linecap="round"/>
+      <path d="M69 69H35V35" stroke="#ffffff" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.98"/>
+      <path d="M35 69l38-38" stroke="#ffffff" stroke-width="6" fill="none" stroke-linecap="round" opacity="0.98"/>
     </svg>
   `);
 
   const makeLogo = (buffer) => sharp(buffer)
-    .resize({ width: logoSize, height: logoSize, fit: 'contain', background: { r: 255, g: 255, b: 255, alpha: 0 } })
+    .resize({ width: sideLogoSize, height: sideLogoSize, fit: 'contain', background: { r: 255, g: 255, b: 255, alpha: 0 } })
     .png()
     .toBuffer();
 
@@ -288,9 +297,10 @@ async function materializeCombinedLogo(serviceRoot, participants) {
     }
   })
     .composite([
-      { input: containerSvg, left: 0, top: 0 },
-      { input: leftLogo, left: leftX, top: logoY },
-      { input: rightLogo, left: rightX, top: logoY },
+      { input: sideCircle(sideBgSize), left: leftBgX, top: sideBgY },
+      { input: sideCircle(sideBgSize), left: rightBgX, top: sideBgY },
+      { input: leftLogo, left: leftLogoX, top: sideLogoY },
+      { input: rightLogo, left: rightLogoX, top: sideLogoY },
       { input: centerBadgeSvg, left: centerX, top: centerY }
     ])
     .png()
