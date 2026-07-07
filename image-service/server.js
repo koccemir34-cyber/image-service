@@ -129,15 +129,18 @@ async function materializeParticipantLogo(serviceRoot, participant, fallbackBran
   return null;
 }
 
-async function makeRoundAvatar(logoPath, size) {
-  if (!logoPath) {
-    return sharp({
-      create: { width: size, height: size, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 1 } }
-    }).png().toBuffer();
-  }
+async function makeRoundAvatar(logoPath, size, options = {}) {
+  const trimLogo = options.trimLogo !== false;
+  const showBorder = options.showBorder !== false;
+  const borderColor = options.borderColor || '#d7dde5';
+  const bgColor = options.bgColor || '#ffffff';
+  const innerPadding = Number.isFinite(options.innerPadding) ? options.innerPadding : 4;
 
-  const raw = await fs.readFile(logoPath);
-  const innerSize = size - 8;
+  const circleBase = Buffer.from(
+    `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="${size / 2}" cy="${size / 2}" r="${(size / 2) - 2}" fill="${bgColor}"/>
+    </svg>`
+  );
   const circleMask = Buffer.from(
     `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
       <circle cx="${size / 2}" cy="${size / 2}" r="${(size / 2) - 2}" fill="#ffffff"/>
@@ -145,12 +148,27 @@ async function makeRoundAvatar(logoPath, size) {
   );
   const border = Buffer.from(
     `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
-      <circle cx="${size / 2}" cy="${size / 2}" r="${(size / 2) - 2}" fill="none" stroke="#d7dde5" stroke-width="2"/>
+      <circle cx="${size / 2}" cy="${size / 2}" r="${(size / 2) - 2}" fill="none" stroke="${borderColor}" stroke-width="2"/>
     </svg>`
   );
 
-  const logo = await sharp(raw)
-    .rotate()
+  if (!logoPath) {
+    return sharp({
+      create: { width: size, height: size, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 0 } }
+    })
+      .composite(showBorder ? [{ input: circleBase, left: 0, top: 0 }, { input: border, left: 0, top: 0 }] : [{ input: circleBase, left: 0, top: 0 }])
+      .png()
+      .toBuffer();
+  }
+
+  const raw = await fs.readFile(logoPath);
+  let pipeline = sharp(raw).rotate();
+  if (trimLogo) {
+    pipeline = pipeline.trim({ background: { r: 255, g: 255, b: 255, alpha: 0 }, threshold: 18 });
+  }
+
+  const innerSize = Math.max(20, size - (innerPadding * 2));
+  const logo = await pipeline
     .resize({ width: innerSize, height: innerSize, fit: 'contain', background: { r: 255, g: 255, b: 255, alpha: 0 } })
     .png()
     .toBuffer();
@@ -158,14 +176,17 @@ async function makeRoundAvatar(logoPath, size) {
   const logoX = Math.round((size - innerSize) / 2);
   const logoY = logoX;
 
+  const composites = [
+    { input: circleBase, left: 0, top: 0 },
+    { input: logo, left: logoX, top: logoY },
+    { input: circleMask, left: 0, top: 0, blend: 'dest-in' }
+  ];
+  if (showBorder) composites.push({ input: border, left: 0, top: 0 });
+
   return sharp({
-    create: { width: size, height: size, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 1 } }
+    create: { width: size, height: size, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 0 } }
   })
-    .composite([
-      { input: circleMask, left: 0, top: 0, blend: 'dest-in' },
-      { input: logo, left: logoX, top: logoY },
-      { input: border, left: 0, top: 0 }
-    ])
+    .composite(composites)
     .png()
     .toBuffer();
 }
@@ -203,7 +224,7 @@ function dualHeaderSvg(firstName, firstHandle, secondName, secondHandle) {
 }
 
 async function applyDualHeaderOverlay(basePng, secondaryLogoPath, firstName, firstHandle, secondName, secondHandle) {
-  const secondaryAvatar = await makeRoundAvatar(secondaryLogoPath, 78);
+  const secondaryAvatar = await makeRoundAvatar(secondaryLogoPath, 82, { trimLogo: true, innerPadding: 2, showBorder: true, borderColor: '#e5e7eb' });
   return sharp(basePng)
     .composite([
       { input: dualHeaderSvg(firstName, firstHandle, secondName, secondHandle), left: 0, top: 0 },
@@ -282,7 +303,7 @@ app.get('/', (_req, res) => {
 app.get('/health', (_req, res) => {
   res.json({
     ok: true,
-    service: 'skstory-render-v12.2-plain-repost',
+    service: 'skstory-render-v12.3-remaz-logo-improved',
     renderer: 'sharp',
     multiPhoto: true,
     ortakHeader: 'two-separate-avatars-clean',
@@ -307,7 +328,7 @@ app.post('/generate', async (req, res) => {
 
     res.setHeader('Content-Type', 'image/png');
     res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('X-Renderer-Version', 'skstory-render-v12.2-plain-repost');
+    res.setHeader('X-Renderer-Version', 'skstory-render-v12.3-remaz-logo-improved');
     res.setHeader('X-Photo-Count', String(photoBuffers.length));
     return res.send(png);
   } catch (error) {
