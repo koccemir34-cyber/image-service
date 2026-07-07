@@ -179,23 +179,33 @@ function escapeXml(value) {
     .replace(/'/g, '&apos;');
 }
 
-function dualHeaderSvg(secondName, secondHandle) {
+function dualHeaderSvg(firstName, firstHandle, secondName, secondHandle) {
   return Buffer.from(
     `<svg width="1080" height="1920" xmlns="http://www.w3.org/2000/svg">
-      <circle cx="530" cy="264" r="24" fill="#0f172a" stroke="#c7a24a" stroke-width="2"/>
-      <text x="530" y="273" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="27" font-weight="700" fill="#ffffff">↔</text>
-      <text x="655" y="252" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700" fill="#0f172a">${escapeXml(secondName)}</text>
-      <text x="655" y="286" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" fill="#6b7280">${escapeXml(secondHandle)}</text>
+      <!-- Original single-profile texts are hidden before the two-profile header is redrawn. -->
+      <rect x="218" y="192" width="640" height="112" rx="8" fill="#ffffff"/>
+      <text x="226" y="246" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700" fill="#0f172a">${escapeXml(firstName)}</text>
+      <text x="226" y="279" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" fill="#6b7280">${escapeXml(firstHandle)}</text>
+      <!-- Repost-style connector icon: no circle, just two clean arrows -->
+      <g transform="translate(437 230)">
+        <path d="M2 14h26l-6-6" fill="none" stroke="#4b5563" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M22 8l7 7-7 7" fill="none" stroke="#4b5563" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M34 28H8l6 6" fill="none" stroke="#4b5563" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M14 22l-7 7 7 7" fill="none" stroke="#4b5563" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" transform="translate(0,-8)" opacity="0"/>
+        <path d="M14 21l-7 7 7 7" fill="none" stroke="#4b5563" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+      </g>
+      <text x="590" y="246" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700" fill="#0f172a">${escapeXml(secondName)}</text>
+      <text x="590" y="279" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" fill="#6b7280">${escapeXml(secondHandle)}</text>
     </svg>`
   );
 }
 
-async function applyDualHeaderOverlay(basePng, secondaryLogoPath, secondName, secondHandle) {
+async function applyDualHeaderOverlay(basePng, secondaryLogoPath, firstName, firstHandle, secondName, secondHandle) {
   const secondaryAvatar = await makeRoundAvatar(secondaryLogoPath, 78);
   return sharp(basePng)
     .composite([
-      { input: dualHeaderSvg(secondName, secondHandle), left: 0, top: 0 },
-      { input: secondaryAvatar, left: 560, top: 225 }
+      { input: dualHeaderSvg(firstName, firstHandle, secondName, secondHandle), left: 0, top: 0 },
+      { input: secondaryAvatar, left: 498, top: 212 }
     ])
     .png()
     .toBuffer();
@@ -248,6 +258,8 @@ async function renderWithBrand(brand, input) {
       return applyDualHeaderOverlay(
         basePng,
         secondaryLogoPath,
+        participantA?.profileDisplayName || 'Selhattin Koç',
+        participantA?.profileUsername || '@selhattinkocinsaat',
         participantB?.profileDisplayName || 'Remaz İnşaat',
         participantB?.profileUsername || '@remazinsaat'
       );
@@ -268,10 +280,10 @@ app.get('/', (_req, res) => {
 app.get('/health', (_req, res) => {
   res.json({
     ok: true,
-    service: 'skstory-render-v11.9-ortak-two-avatars',
+    service: 'skstory-render-v12.1-repost-connector',
     renderer: 'sharp',
     multiPhoto: true,
-    ortakHeader: 'two-separate-avatars',
+    ortakHeader: 'two-separate-avatars-clean',
     timestamp: new Date().toISOString()
   });
 });
@@ -293,7 +305,7 @@ app.post('/generate', async (req, res) => {
 
     res.setHeader('Content-Type', 'image/png');
     res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('X-Renderer-Version', 'skstory-render-v11.9-ortak-two-avatars');
+    res.setHeader('X-Renderer-Version', 'skstory-render-v12.1-repost-connector');
     res.setHeader('X-Photo-Count', String(photoBuffers.length));
     return res.send(png);
   } catch (error) {
