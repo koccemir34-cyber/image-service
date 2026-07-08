@@ -204,7 +204,7 @@ function dualHeaderSvg(firstName, firstHandle, secondName, secondHandle) {
   return Buffer.from(
     `<svg width="1080" height="1920" xmlns="http://www.w3.org/2000/svg">
       <!-- Clear the entire original one-profile header and draw the shared header from scratch. -->
-      <rect x="210" y="188" width="670" height="122" fill="#ffffff"/>
+      <rect x="108" y="188" width="772" height="122" fill="#ffffff"/>
 
       <text x="226" y="246" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700" fill="#0f172a">${escapeXml(firstName)}</text>
       <text x="226" y="279" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" fill="#6b7280">${escapeXml(firstHandle)}</text>
@@ -223,11 +223,13 @@ function dualHeaderSvg(firstName, firstHandle, secondName, secondHandle) {
   );
 }
 
-async function applyDualHeaderOverlay(basePng, secondaryLogoPath, firstName, firstHandle, secondName, secondHandle) {
+async function applyDualHeaderOverlay(basePng, primaryLogoPath, secondaryLogoPath, firstName, firstHandle, secondName, secondHandle) {
+  const primaryAvatar = await makeRoundAvatar(primaryLogoPath, 82, { trimLogo: false, innerPadding: 2, showBorder: true, borderColor: '#e5e7eb' });
   const secondaryAvatar = await makeRoundAvatar(secondaryLogoPath, 82, { trimLogo: true, innerPadding: 2, showBorder: true, borderColor: '#e5e7eb' });
   return sharp(basePng)
     .composite([
       { input: dualHeaderSvg(firstName, firstHandle, secondName, secondHandle), left: 0, top: 0 },
+      { input: primaryAvatar, left: 122, top: 212 },
       { input: secondaryAvatar, left: 498, top: 212 }
     ])
     .png()
@@ -280,6 +282,7 @@ async function renderWithBrand(brand, input) {
 
       return applyDualHeaderOverlay(
         basePng,
+        primaryLogoPath,
         secondaryLogoPath,
         participantA?.profileDisplayName || 'Selhattin Koç',
         participantA?.profileUsername || '@selhattinkocinsaat',
@@ -303,7 +306,7 @@ app.get('/', (_req, res) => {
 app.get('/health', (_req, res) => {
   res.json({
     ok: true,
-    service: 'skstory-render-v12.3-remaz-logo-improved',
+    service: 'skstory-render-v12.4-fix-left-avatar-clipping',
     renderer: 'sharp',
     multiPhoto: true,
     ortakHeader: 'two-separate-avatars-clean',
@@ -328,7 +331,7 @@ app.post('/generate', async (req, res) => {
 
     res.setHeader('Content-Type', 'image/png');
     res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('X-Renderer-Version', 'skstory-render-v12.3-remaz-logo-improved');
+    res.setHeader('X-Renderer-Version', 'skstory-render-v12.4-fix-left-avatar-clipping');
     res.setHeader('X-Photo-Count', String(photoBuffers.length));
     return res.send(png);
   } catch (error) {
