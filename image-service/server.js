@@ -200,37 +200,49 @@ function escapeXml(value) {
     .replace(/'/g, '&apos;');
 }
 
-function dualHeaderSvg(firstName, firstHandle, secondName, secondHandle) {
+function tripleHeaderSvg(firstName, firstHandle, secondName, secondHandle, thirdName, thirdHandle) {
   return Buffer.from(
     `<svg width="1080" height="1920" xmlns="http://www.w3.org/2000/svg">
-      <!-- Clear the entire original one-profile header and draw the shared header from scratch. -->
-      <rect x="108" y="188" width="772" height="122" fill="#ffffff"/>
+      <!-- Original single-profile header is hidden before the three-profile ortak header is redrawn. -->
+      <rect x="108" y="188" width="790" height="122" fill="#ffffff"/>
 
-      <text x="226" y="246" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700" fill="#0f172a">${escapeXml(firstName)}</text>
-      <text x="226" y="279" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" fill="#6b7280">${escapeXml(firstHandle)}</text>
+      <text x="190" y="236" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="#0f172a">${escapeXml(firstName)}</text>
+      <text x="190" y="264" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="400" fill="#6b7280">${escapeXml(firstHandle)}</text>
 
-      <!-- Plain X-style repost connector. No circle, no background, no gold border. -->
-      <g transform="translate(465 233)" fill="none" stroke="#536471" stroke-width="3.3" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M2 11h26l-6-6"/>
-        <path d="M22 5l6 6-6 6"/>
-        <path d="M30 27H4l6 6"/>
+      <g transform="translate(372 224)" fill="none" stroke="#536471" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2 10h22l-5-5"/>
+        <path d="M19 5l6 6-6 6"/>
+        <path d="M27 26H5l5 5"/>
         <path d="M10 21l-6 6 6 6"/>
       </g>
 
-      <text x="590" y="246" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700" fill="#0f172a">${escapeXml(secondName)}</text>
-      <text x="590" y="279" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" fill="#6b7280">${escapeXml(secondHandle)}</text>
+      <text x="480" y="236" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="#0f172a">${escapeXml(secondName)}</text>
+      <text x="480" y="264" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="400" fill="#6b7280">${escapeXml(secondHandle)}</text>
+
+      <g transform="translate(632 224)" fill="none" stroke="#536471" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2 10h22l-5-5"/>
+        <path d="M19 5l6 6-6 6"/>
+        <path d="M27 26H5l5 5"/>
+        <path d="M10 21l-6 6 6 6"/>
+      </g>
+
+      <text x="735" y="236" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#0f172a">${escapeXml(thirdName)}</text>
+      <text x="735" y="264" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="400" fill="#6b7280">${escapeXml(thirdHandle)}</text>
     </svg>`
   );
 }
 
-async function applyDualHeaderOverlay(basePng, primaryLogoPath, secondaryLogoPath, firstName, firstHandle, secondName, secondHandle) {
-  const primaryAvatar = await makeRoundAvatar(primaryLogoPath, 82, { trimLogo: false, innerPadding: 2, showBorder: true, borderColor: '#e5e7eb' });
-  const secondaryAvatar = await makeRoundAvatar(secondaryLogoPath, 82, { trimLogo: true, innerPadding: 2, showBorder: true, borderColor: '#e5e7eb' });
+async function applyTripleHeaderOverlay(basePng, primaryLogoPath, secondLogoPath, thirdLogoPath, firstName, firstHandle, secondName, secondHandle, thirdName, thirdHandle) {
+  const avatarOptions = { trimLogo: true, innerPadding: 2, showBorder: true, borderColor: '#e5e7eb' };
+  const firstAvatar = await makeRoundAvatar(primaryLogoPath, 66, avatarOptions);
+  const secondAvatar = await makeRoundAvatar(secondLogoPath, 66, avatarOptions);
+  const thirdAvatar = await makeRoundAvatar(thirdLogoPath, 66, avatarOptions);
   return sharp(basePng)
     .composite([
-      { input: dualHeaderSvg(firstName, firstHandle, secondName, secondHandle), left: 0, top: 0 },
-      { input: primaryAvatar, left: 122, top: 212 },
-      { input: secondaryAvatar, left: 498, top: 212 }
+      { input: tripleHeaderSvg(firstName, firstHandle, secondName, secondHandle, thirdName, thirdHandle), left: 0, top: 0 },
+      { input: firstAvatar, left: 122, top: 211 },
+      { input: secondAvatar, left: 410, top: 211 },
+      { input: thirdAvatar, left: 665, top: 211 }
     ])
     .png()
     .toBuffer();
@@ -251,14 +263,18 @@ async function renderWithBrand(brand, input) {
       previous[key] = Object.prototype.hasOwnProperty.call(process.env, key) ? process.env[key] : undefined;
     }
 
-    const isOrtak = brand.id === 'ortak' && Array.isArray(brand.sharedParticipants) && brand.sharedParticipants.length >= 2;
+    const isOrtak = brand.id === 'ortak' && Array.isArray(brand.sharedParticipants) && brand.sharedParticipants.length >= 3;
     const participantA = isOrtak ? brand.sharedParticipants[0] : null;
     const participantB = isOrtak ? brand.sharedParticipants[1] : null;
+    const participantC = isOrtak ? brand.sharedParticipants[2] : null;
     const primaryLogoPath = isOrtak
       ? await materializeParticipantLogo(__dirname, participantA, 'skstory')
       : await materializeProfileLogo(__dirname, brand);
     const secondaryLogoPath = isOrtak
       ? await materializeParticipantLogo(__dirname, participantB, 'remazstory')
+      : null;
+    const thirdLogoPath = isOrtak
+      ? await materializeParticipantLogo(__dirname, participantC, 'hek')
       : null;
 
     try {
@@ -280,14 +296,17 @@ async function renderWithBrand(brand, input) {
 
       if (!isOrtak) return basePng;
 
-      return applyDualHeaderOverlay(
+      return applyTripleHeaderOverlay(
         basePng,
         primaryLogoPath,
         secondaryLogoPath,
+        thirdLogoPath,
         participantA?.profileDisplayName || 'Selhattin Koç',
         participantA?.profileUsername || '@selhattinkocinsaat',
         participantB?.profileDisplayName || 'Remaz İnşaat',
-        participantB?.profileUsername || '@remazinsaat'
+        participantB?.profileUsername || '@remazinsaat',
+        participantC?.profileDisplayName || 'Hasan Emir Koç İnşaat',
+        participantC?.profileUsername || '@hasanemirkocinsaat'
       );
     } finally {
       delete require.cache[STORY_MODULE_PATH];
@@ -348,4 +367,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { app, buildVerticalPhotoStack, applyDualHeaderOverlay, makeRoundAvatar };
+module.exports = { app, buildVerticalPhotoStack, applyTripleHeaderOverlay, makeRoundAvatar };

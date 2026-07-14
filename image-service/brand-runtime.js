@@ -23,12 +23,19 @@ const BRAND_DEFAULTS = Object.freeze({
     footerTitle: 'REMAZ İNŞAAT',
     footerUrl: 'remazinsaat.web.app'
   }),
+  hek: Object.freeze({
+    id: 'hek',
+    profileName: 'Hasan Emir Koç İnşaat',
+    profileHandle: '@hasanemirkocinsaat',
+    footerTitle: 'HASAN EMİR KOÇ İNŞAAT',
+    footerUrl: 'hasanemirkocinsaat.web.app'
+  }),
   ortak: Object.freeze({
     id: 'ortak',
-    profileName: 'Selhattin Koç ↔ Remaz İnşaat',
-    profileHandle: '@selhattinkocinsaat · @remazinsaat',
-    footerTitle: 'SELHATTİN KOÇ İNŞAAT × REMAZ İNŞAAT',
-    footerUrl: 'selhattinkoc.web.app • remazinsaat.web.app'
+    profileName: 'Selhattin Koç ↔ Remaz İnşaat ↔ Hasan Emir Koç İnşaat',
+    profileHandle: '@selhattinkocinsaat · @remazinsaat · @hasanemirkocinsaat',
+    footerTitle: 'SELHATTİN KOÇ İNŞAAT × REMAZ İNŞAAT × HASAN EMİR KOÇ İNŞAAT',
+    footerUrl: 'selhattinkoc.web.app • remazinsaat.web.app • hasanemirkocinsaat.web.app'
   })
 });
 
@@ -44,6 +51,7 @@ function firstText(...values) {
 function normalizeBrandId(value) {
   const normalized = String(value || '').trim().toLocaleLowerCase('tr-TR');
   if (normalized === 'remazstory') return 'remazstory';
+  if (normalized === 'hek' || normalized === 'hekstory' || normalized === 'hekstroy') return 'hek';
   if (normalized === 'ortak') return 'ortak';
   return 'skstory';
 }
@@ -53,6 +61,7 @@ function resolveBrand(body = {}) {
   const id = normalizeBrandId(firstText(body.brandId, nested.id, body.brand));
   const defaults = BRAND_DEFAULTS[id];
   const remaz = id === 'remazstory';
+  const hek = id === 'hek';
   const ortak = id === 'ortak';
 
   const sharedParticipants = collectSharedParticipants(body, nested);
@@ -61,7 +70,7 @@ function resolveBrand(body = {}) {
     id,
     profileName: ortak
       ? firstText(body.profileDisplayName, body.profileName, nested.profileDisplayName, nested.profileName, defaults.profileName)
-      : remaz ? defaults.profileName : firstText(
+      : (remaz || hek) ? defaults.profileName : firstText(
           body.profileDisplayName,
           body.profileName,
           nested.profileDisplayName,
@@ -72,7 +81,7 @@ function resolveBrand(body = {}) {
         ),
     profileHandle: ortak
       ? firstText(body.profileUsername, body.accountHandle, body.username, nested.profileUsername, nested.accountHandle, nested.username, defaults.profileHandle)
-      : remaz ? defaults.profileHandle : firstText(
+      : (remaz || hek) ? defaults.profileHandle : firstText(
           body.profileUsername,
           body.accountHandle,
           body.username,
@@ -83,7 +92,7 @@ function resolveBrand(body = {}) {
         ),
     footerTitle: ortak
       ? firstText(body.footerBrandText, body.footerTitle, nested.footerBrandText, nested.footerTitle, defaults.footerTitle)
-      : remaz ? defaults.footerTitle : firstText(
+      : (remaz || hek) ? defaults.footerTitle : firstText(
           body.footerBrandText,
           body.footerTitle,
           body.watermarkName,
@@ -94,7 +103,7 @@ function resolveBrand(body = {}) {
         ),
     footerUrl: ortak
       ? firstText(body.footerWebsiteText, body.footerSite, body.websiteUrl, nested.footerWebsiteText, nested.footerSite, nested.websiteUrl, defaults.footerUrl)
-      : remaz ? defaults.footerUrl : firstText(
+      : (remaz || hek) ? defaults.footerUrl : firstText(
           body.footerWebsiteText,
           body.footerSite,
           body.websiteUrl,
@@ -128,6 +137,7 @@ function collectSharedParticipants(body = {}, nested = {}) {
     }))
     .filter((item) => item.profileDisplayName || item.profileUsername || item.profileImageB64);
 
+  if (normalized.length >= 3) return normalized.slice(0, 3);
   if (normalized.length >= 2) return normalized.slice(0, 2);
 
   const fallbacks = [
@@ -146,6 +156,14 @@ function collectSharedParticipants(body = {}, nested = {}) {
       profileImageB64: firstText(body.participantBLogoB64, nested.participantBLogoB64),
       profileImageMimeType: firstText(body.participantBLogoMimeType, nested.participantBLogoMimeType),
       profileImageFileName: firstText(body.participantBLogoFileName, nested.participantBLogoFileName)
+    },
+    {
+      profileDisplayName: firstText(body.participantCName, nested.participantCName, BRAND_DEFAULTS.hek.profileName),
+      profileUsername: firstText(body.participantCUsername, nested.participantCUsername, BRAND_DEFAULTS.hek.profileHandle),
+      websiteUrl: firstText(body.participantCWebsiteUrl, nested.participantCWebsiteUrl, BRAND_DEFAULTS.hek.footerUrl),
+      profileImageB64: firstText(body.participantCLogoB64, nested.participantCLogoB64),
+      profileImageMimeType: firstText(body.participantCLogoMimeType, nested.participantCLogoMimeType),
+      profileImageFileName: firstText(body.participantCLogoFileName, nested.participantCLogoFileName)
     }
   ].filter((item) => item.profileDisplayName || item.profileUsername || item.profileImageB64);
 
@@ -238,51 +256,28 @@ async function materializeCombinedLogo(serviceRoot, participants) {
     .update(buffers[1].buffer)
     .digest('hex')
     .slice(0, 20);
-  const output = path.join(cacheDir, `ortak-avatar-${hash}.png`);
+  const output = path.join(cacheDir, `ortak-${hash}.png`);
 
   try {
     await fs.access(output);
     return output;
   } catch {}
 
-  const canvasSize = 256;
-  const sideBgSize = 88;
-  const sideLogoSize = 64;
-  const centerSize = 104;
-  const leftBgX = 10;
-  const rightBgX = canvasSize - sideBgSize - 10;
-  const sideBgY = Math.round((canvasSize - sideBgSize) / 2);
-  const leftLogoX = leftBgX + Math.round((sideBgSize - sideLogoSize) / 2);
-  const rightLogoX = rightBgX + Math.round((sideBgSize - sideLogoSize) / 2);
-  const sideLogoY = sideBgY + Math.round((sideBgSize - sideLogoSize) / 2);
-  const centerX = Math.round((canvasSize - centerSize) / 2);
-  const centerY = Math.round((canvasSize - centerSize) / 2);
-
-  const sideCircle = (size) => Buffer.from(`
-    <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg">
-      <circle cx="${size / 2}" cy="${size / 2}" r="${(size / 2) - 2}" fill="#ffffff" stroke="#dbe2ea" stroke-width="2"/>
-    </svg>
-  `);
-
-  const centerBadgeSvg = Buffer.from(`
-    <svg width="${centerSize}" height="${centerSize}" viewBox="0 0 104 104" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <linearGradient id="g" x1="0" x2="1" y1="0" y2="1">
-          <stop offset="0%" stop-color="#0f172a"/>
-          <stop offset="100%" stop-color="#1e293b"/>
-        </linearGradient>
-      </defs>
-      <circle cx="52" cy="52" r="49" fill="url(#g)"/>
-      <circle cx="52" cy="52" r="47" fill="none" stroke="#d4af37" stroke-width="3" opacity="0.95"/>
-      <path d="M35 34h34v34" stroke="#ffffff" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M69 35L31 73" stroke="#ffffff" stroke-width="6" fill="none" stroke-linecap="round"/>
-      <path d="M69 69H35V35" stroke="#ffffff" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.98"/>
-      <path d="M35 69l38-38" stroke="#ffffff" stroke-width="6" fill="none" stroke-linecap="round" opacity="0.98"/>
+  const size = 96;
+  const canvasWidth = 248;
+  const canvasHeight = 96;
+  const iconSvg = Buffer.from(`
+    <svg width="40" height="40" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="20" cy="20" r="18" fill="#0f172a"/>
+      <path d="M16 13h10v10" stroke="#ffffff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M24 13L14 23" stroke="#ffffff" stroke-width="3" fill="none" stroke-linecap="round"/>
+      <path d="M24 27H14V17" stroke="#ffffff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M16 27l10-10" stroke="#ffffff" stroke-width="3" fill="none" stroke-linecap="round"/>
     </svg>
   `);
 
   const makeLogo = (buffer) => sharp(buffer)
-    .resize({ width: sideLogoSize, height: sideLogoSize, fit: 'contain', background: { r: 255, g: 255, b: 255, alpha: 0 } })
+    .resize({ width: size, height: size, fit: 'contain', background: { r: 255, g: 255, b: 255, alpha: 0 } })
     .png()
     .toBuffer();
 
@@ -290,18 +285,16 @@ async function materializeCombinedLogo(serviceRoot, participants) {
 
   await sharp({
     create: {
-      width: canvasSize,
-      height: canvasSize,
+      width: canvasWidth,
+      height: canvasHeight,
       channels: 4,
-      background: { r: 255, g: 255, b: 255, alpha: 0 }
+      background: { r: 255, g: 255, b: 255, alpha: 1 }
     }
   })
     .composite([
-      { input: sideCircle(sideBgSize), left: leftBgX, top: sideBgY },
-      { input: sideCircle(sideBgSize), left: rightBgX, top: sideBgY },
-      { input: leftLogo, left: leftLogoX, top: sideLogoY },
-      { input: rightLogo, left: rightLogoX, top: sideLogoY },
-      { input: centerBadgeSvg, left: centerX, top: centerY }
+      { input: leftLogo, left: 0, top: 0 },
+      { input: rightLogo, left: 152, top: 0 },
+      { input: iconSvg, left: 104, top: 28 }
     ])
     .png()
     .toFile(output);
