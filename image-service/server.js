@@ -200,6 +200,42 @@ function escapeXml(value) {
     .replace(/'/g, '&apos;');
 }
 
+function dualHeaderSvg(firstName, firstHandle, secondName, secondHandle) {
+  return Buffer.from(
+    `<svg width="1080" height="1920" xmlns="http://www.w3.org/2000/svg">
+      <!-- Original single-profile header is hidden before the two-profile shared header is redrawn. -->
+      <rect x="108" y="188" width="850" height="122" fill="#ffffff"/>
+
+      <text x="226" y="246" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700" fill="#0f172a">${escapeXml(firstName)}</text>
+      <text x="226" y="279" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" fill="#6b7280">${escapeXml(firstHandle)}</text>
+
+      <g transform="translate(465 233)" fill="none" stroke="#536471" stroke-width="3.3" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2 11h26l-6-6"/>
+        <path d="M22 5l6 6-6 6"/>
+        <path d="M30 27H4l6 6"/>
+        <path d="M10 21l-6 6 6 6"/>
+      </g>
+
+      <text x="590" y="246" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700" fill="#0f172a">${escapeXml(secondName)}</text>
+      <text x="590" y="279" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" fill="#6b7280">${escapeXml(secondHandle)}</text>
+    </svg>`
+  );
+}
+
+async function applyDualHeaderOverlay(basePng, primaryLogoPath, secondaryLogoPath, firstName, firstHandle, secondName, secondHandle) {
+  const avatarOptions = { trimLogo: true, innerPadding: 2, showBorder: true, borderColor: '#e5e7eb' };
+  const primaryAvatar = await makeRoundAvatar(primaryLogoPath, 82, avatarOptions);
+  const secondaryAvatar = await makeRoundAvatar(secondaryLogoPath, 82, avatarOptions);
+  return sharp(basePng)
+    .composite([
+      { input: dualHeaderSvg(firstName, firstHandle, secondName, secondHandle), left: 0, top: 0 },
+      { input: primaryAvatar, left: 122, top: 212 },
+      { input: secondaryAvatar, left: 498, top: 212 }
+    ])
+    .png()
+    .toBuffer();
+}
+
 function tripleHeaderSvg(firstName, firstHandle, secondName, secondHandle, thirdName, thirdHandle) {
   return Buffer.from(
     `<svg width="1080" height="1920" xmlns="http://www.w3.org/2000/svg">
@@ -263,25 +299,28 @@ async function renderWithBrand(brand, input) {
       previous[key] = Object.prototype.hasOwnProperty.call(process.env, key) ? process.env[key] : undefined;
     }
 
-    const isOrtak = brand.id === 'ortak' && Array.isArray(brand.sharedParticipants) && brand.sharedParticipants.length >= 3;
-    const participantA = isOrtak ? brand.sharedParticipants[0] : null;
-    const participantB = isOrtak ? brand.sharedParticipants[1] : null;
-    const participantC = isOrtak ? brand.sharedParticipants[2] : null;
-    const primaryLogoPath = isOrtak
-      ? await materializeParticipantLogo(__dirname, participantA, 'skstory')
+    const sharedParticipants = Array.isArray(brand.sharedParticipants)
+      ? brand.sharedParticipants.filter(Boolean).slice(0, 3)
+      : [];
+    const isShared = sharedParticipants.length >= 2;
+    const participantA = isShared ? sharedParticipants[0] : null;
+    const participantB = isShared ? sharedParticipants[1] : null;
+    const participantC = sharedParticipants.length >= 3 ? sharedParticipants[2] : null;
+    const primaryLogoPath = isShared
+      ? await materializeParticipantLogo(__dirname, participantA, participantA?.id || 'skstory')
       : await materializeProfileLogo(__dirname, brand);
-    const secondaryLogoPath = isOrtak
-      ? await materializeParticipantLogo(__dirname, participantB, 'remazstory')
+    const secondaryLogoPath = isShared
+      ? await materializeParticipantLogo(__dirname, participantB, participantB?.id || 'remazstory')
       : null;
-    const thirdLogoPath = isOrtak
-      ? await materializeParticipantLogo(__dirname, participantC, 'hek')
+    const thirdLogoPath = participantC
+      ? await materializeParticipantLogo(__dirname, participantC, participantC?.id || 'hek')
       : null;
 
     try {
-      process.env.PROFILE_NAME = isOrtak
+      process.env.PROFILE_NAME = isShared
         ? (participantA?.profileDisplayName || 'Selhattin Koç')
         : brand.profileName;
-      process.env.PROFILE_HANDLE = isOrtak
+      process.env.PROFILE_HANDLE = isShared
         ? (participantA?.profileUsername || '@selhattinkocinsaat')
         : brand.profileHandle;
       process.env.FOOTER_TITLE = brand.footerTitle;
@@ -294,19 +333,31 @@ async function renderWithBrand(brand, input) {
       const { makeSkStory } = require('./story');
       const basePng = await makeSkStory(input);
 
-      if (!isOrtak) return basePng;
+      if (!isShared) return basePng;
 
-      return applyTripleHeaderOverlay(
+      if (participantC) {
+        return applyTripleHeaderOverlay(
+          basePng,
+          primaryLogoPath,
+          secondaryLogoPath,
+          thirdLogoPath,
+          participantA?.profileDisplayName || 'Selhattin Koç',
+          participantA?.profileUsername || '@selhattinkocinsaat',
+          participantB?.profileDisplayName || 'Remaz İnşaat',
+          participantB?.profileUsername || '@remazinsaat',
+          participantC?.profileDisplayName || 'Hasan Emir Koç İnşaat',
+          participantC?.profileUsername || '@hasanemirkocinsaat'
+        );
+      }
+
+      return applyDualHeaderOverlay(
         basePng,
         primaryLogoPath,
         secondaryLogoPath,
-        thirdLogoPath,
         participantA?.profileDisplayName || 'Selhattin Koç',
         participantA?.profileUsername || '@selhattinkocinsaat',
         participantB?.profileDisplayName || 'Remaz İnşaat',
-        participantB?.profileUsername || '@remazinsaat',
-        participantC?.profileDisplayName || 'Hasan Emir Koç İnşaat',
-        participantC?.profileUsername || '@hasanemirkocinsaat'
+        participantB?.profileUsername || '@remazinsaat'
       );
     } finally {
       delete require.cache[STORY_MODULE_PATH];
@@ -325,10 +376,10 @@ app.get('/', (_req, res) => {
 app.get('/health', (_req, res) => {
   res.json({
     ok: true,
-    service: 'skstory-render-v12.4-fix-left-avatar-clipping',
+    service: 'skstory-render-v14-dual-and-triple-shared-headers',
     renderer: 'sharp',
     multiPhoto: true,
-    ortakHeader: 'two-separate-avatars-clean',
+    ortakHeader: 'dual-and-triple-separate-avatars',
     timestamp: new Date().toISOString()
   });
 });
@@ -350,7 +401,7 @@ app.post('/generate', async (req, res) => {
 
     res.setHeader('Content-Type', 'image/png');
     res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('X-Renderer-Version', 'skstory-render-v12.4-fix-left-avatar-clipping');
+    res.setHeader('X-Renderer-Version', 'skstory-render-v14-dual-and-triple-shared-headers');
     res.setHeader('X-Photo-Count', String(photoBuffers.length));
     return res.send(png);
   } catch (error) {
@@ -367,4 +418,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { app, buildVerticalPhotoStack, applyTripleHeaderOverlay, makeRoundAvatar };
+module.exports = { app, buildVerticalPhotoStack, applyDualHeaderOverlay, applyTripleHeaderOverlay, makeRoundAvatar };

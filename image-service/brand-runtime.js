@@ -30,6 +30,27 @@ const BRAND_DEFAULTS = Object.freeze({
     footerTitle: 'HASAN EMİR KOÇ İNŞAAT',
     footerUrl: 'hasanemirkocinsaat.web.app'
   }),
+  ortakskremaz: Object.freeze({
+    id: 'ortakskremaz',
+    profileName: 'Selhattin Koç ↔ Remaz İnşaat',
+    profileHandle: '@selhattinkocinsaat · @remazinsaat',
+    footerTitle: 'SELHATTİN KOÇ İNŞAAT × REMAZ İNŞAAT',
+    footerUrl: 'selhattinkoc.web.app • remazinsaat.web.app'
+  }),
+  ortakskhk: Object.freeze({
+    id: 'ortakskhk',
+    profileName: 'Selhattin Koç ↔ Hasan Emir Koç İnşaat',
+    profileHandle: '@selhattinkocinsaat · @hasanemirkocinsaat',
+    footerTitle: 'SELHATTİN KOÇ İNŞAAT × HASAN EMİR KOÇ İNŞAAT',
+    footerUrl: 'selhattinkoc.web.app • hasanemirkocinsaat.web.app'
+  }),
+  ortakremazhk: Object.freeze({
+    id: 'ortakremazhk',
+    profileName: 'Remaz İnşaat ↔ Hasan Emir Koç İnşaat',
+    profileHandle: '@remazinsaat · @hasanemirkocinsaat',
+    footerTitle: 'REMAZ İNŞAAT × HASAN EMİR KOÇ İNŞAAT',
+    footerUrl: 'remazinsaat.web.app • hasanemirkocinsaat.web.app'
+  }),
   ortak: Object.freeze({
     id: 'ortak',
     profileName: 'Selhattin Koç ↔ Remaz İnşaat ↔ Hasan Emir Koç İnşaat',
@@ -52,6 +73,9 @@ function normalizeBrandId(value) {
   const normalized = String(value || '').trim().toLocaleLowerCase('tr-TR');
   if (normalized === 'remazstory') return 'remazstory';
   if (normalized === 'hek' || normalized === 'hekstory' || normalized === 'hekstroy') return 'hek';
+  if (normalized === 'ortakskremaz') return 'ortakskremaz';
+  if (normalized === 'ortakskhk') return 'ortakskhk';
+  if (normalized === 'ortakremazhk') return 'ortakremazhk';
   if (normalized === 'ortak') return 'ortak';
   return 'skstory';
 }
@@ -62,13 +86,13 @@ function resolveBrand(body = {}) {
   const defaults = BRAND_DEFAULTS[id];
   const remaz = id === 'remazstory';
   const hek = id === 'hek';
-  const ortak = id === 'ortak';
+  const shared = ['ortak', 'ortakskremaz', 'ortakskhk', 'ortakremazhk'].includes(id);
 
   const sharedParticipants = collectSharedParticipants(body, nested);
 
   return {
     id,
-    profileName: ortak
+    profileName: shared
       ? firstText(body.profileDisplayName, body.profileName, nested.profileDisplayName, nested.profileName, defaults.profileName)
       : (remaz || hek) ? defaults.profileName : firstText(
           body.profileDisplayName,
@@ -79,7 +103,7 @@ function resolveBrand(body = {}) {
           nested.authorName,
           defaults.profileName
         ),
-    profileHandle: ortak
+    profileHandle: shared
       ? firstText(body.profileUsername, body.accountHandle, body.username, nested.profileUsername, nested.accountHandle, nested.username, defaults.profileHandle)
       : (remaz || hek) ? defaults.profileHandle : firstText(
           body.profileUsername,
@@ -90,7 +114,7 @@ function resolveBrand(body = {}) {
           nested.username,
           defaults.profileHandle
         ),
-    footerTitle: ortak
+    footerTitle: shared
       ? firstText(body.footerBrandText, body.footerTitle, nested.footerBrandText, nested.footerTitle, defaults.footerTitle)
       : (remaz || hek) ? defaults.footerTitle : firstText(
           body.footerBrandText,
@@ -101,7 +125,7 @@ function resolveBrand(body = {}) {
           nested.watermarkName,
           defaults.footerTitle
         ),
-    footerUrl: ortak
+    footerUrl: shared
       ? firstText(body.footerWebsiteText, body.footerSite, body.websiteUrl, nested.footerWebsiteText, nested.footerSite, nested.websiteUrl, defaults.footerUrl)
       : (remaz || hek) ? defaults.footerUrl : firstText(
           body.footerWebsiteText,
@@ -128,6 +152,7 @@ function collectSharedParticipants(body = {}, nested = {}) {
 
   const normalized = source
     .map((item) => ({
+      id: firstText(item?.id, item?.brandId),
       profileDisplayName: firstText(item?.profileDisplayName, item?.profileName, item?.displayName, item?.authorName),
       profileUsername: firstText(item?.profileUsername, item?.accountHandle, item?.username),
       websiteUrl: firstText(item?.websiteUrl, item?.footerWebsiteText, item?.footerSite),
@@ -142,6 +167,7 @@ function collectSharedParticipants(body = {}, nested = {}) {
 
   const fallbacks = [
     {
+      id: firstText(body.participantAId, nested.participantAId, 'skstory'),
       profileDisplayName: firstText(body.participantAName, nested.participantAName, BRAND_DEFAULTS.skstory.profileName),
       profileUsername: firstText(body.participantAUsername, nested.participantAUsername, BRAND_DEFAULTS.skstory.profileHandle),
       websiteUrl: firstText(body.participantAWebsiteUrl, nested.participantAWebsiteUrl, BRAND_DEFAULTS.skstory.footerUrl),
@@ -150,6 +176,7 @@ function collectSharedParticipants(body = {}, nested = {}) {
       profileImageFileName: firstText(body.participantALogoFileName, nested.participantALogoFileName)
     },
     {
+      id: firstText(body.participantBId, nested.participantBId, 'remazstory'),
       profileDisplayName: firstText(body.participantBName, nested.participantBName, BRAND_DEFAULTS.remazstory.profileName),
       profileUsername: firstText(body.participantBUsername, nested.participantBUsername, BRAND_DEFAULTS.remazstory.profileHandle),
       websiteUrl: firstText(body.participantBWebsiteUrl, nested.participantBWebsiteUrl, BRAND_DEFAULTS.remazstory.footerUrl),
@@ -158,6 +185,7 @@ function collectSharedParticipants(body = {}, nested = {}) {
       profileImageFileName: firstText(body.participantBLogoFileName, nested.participantBLogoFileName)
     },
     {
+      id: firstText(body.participantCId, nested.participantCId, 'hek'),
       profileDisplayName: firstText(body.participantCName, nested.participantCName, BRAND_DEFAULTS.hek.profileName),
       profileUsername: firstText(body.participantCUsername, nested.participantCUsername, BRAND_DEFAULTS.hek.profileHandle),
       websiteUrl: firstText(body.participantCWebsiteUrl, nested.participantCWebsiteUrl, BRAND_DEFAULTS.hek.footerUrl),
@@ -242,7 +270,7 @@ async function materializeCombinedLogo(serviceRoot, participants) {
       buffers.push({ buffer: direct, fileName: participant.profileImageFileName, mimeType: participant.profileImageMimeType });
       continue;
     }
-    const fallbackId = index === 0 ? 'skstory' : 'remazstory';
+    const fallbackId = normalizeBrandId(participant.id || (index === 0 ? 'skstory' : 'remazstory'));
     const localPath = await findLocalLogo(serviceRoot, fallbackId);
     if (!localPath) return null;
     buffers.push({ buffer: await fs.readFile(localPath), fileName: path.basename(localPath), mimeType: '' });
@@ -303,13 +331,16 @@ async function materializeCombinedLogo(serviceRoot, participants) {
 }
 
 async function materializeProfileLogo(serviceRoot, brand) {
-  if (brand.id === 'ortak') {
+  if (Array.isArray(brand.sharedParticipants) && brand.sharedParticipants.length >= 2) {
     const combined = await materializeCombinedLogo(serviceRoot, brand.sharedParticipants);
     if (combined) return combined;
   }
 
   const fromRequest = base64ToBuffer(brand.profileImageB64, MAX_PROFILE_BYTES, 'Profile image');
-  if (!fromRequest) return findLocalLogo(serviceRoot, brand.id === 'ortak' ? 'skstory' : brand.id);
+  if (!fromRequest) {
+    const fallbackId = brand.sharedParticipants?.[0]?.id || (brand.id.startsWith('ortak') ? 'skstory' : brand.id);
+    return findLocalLogo(serviceRoot, normalizeBrandId(fallbackId));
+  }
 
   const cacheDir = path.join('/tmp', 'sk-remaz-story-profiles');
   await fs.mkdir(cacheDir, { recursive: true });
