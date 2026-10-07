@@ -195,6 +195,18 @@ function collectSharedParticipants(body = {}, nested = {}) {
     }
   ].filter((item) => item.profileDisplayName || item.profileUsername || item.profileImageB64);
 
+  // Eğer participant verisi yoksa (tekli komut), boş array döndür
+  const hasParticipantData = body.participantAName || body.participantALogoB64 || 
+    nested.participantAName || nested.participantALogoB64 ||
+    body.participantBName || body.participantBLogoB64 ||
+    nested.participantBName || nested.participantBLogoB64 ||
+    body.participantCName || body.participantCLogoB64 ||
+    nested.participantCName || nested.participantCLogoB64;
+  
+  if (!hasParticipantData) {
+    return [];
+  }
+
   return fallbacks;
 }
 function base64ToBuffer(value, maxBytes, label) {
