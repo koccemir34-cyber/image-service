@@ -59,10 +59,28 @@ async function buildVerticalPhotoStack(photoBuffers, layoutMode = 'smart_adaptiv
   if (!source.length) return null;
   if (source.length === 1) return source[0];
 
-  const preset = getMosaicPreset(layoutMode, source.length);
-  const { width, height, padding, gap, outerBackground, panelBackground } = preset;
-  const panelWidth = width - (padding * 2);
-  const panelHeight = Math.floor((height - (padding * 2) - (gap * (source.length - 1))) / source.length);
+  // Fotoğraf metadata'larını al
+  const metadatas = await Promise.all(source.map((buffer) => sharp(buffer).metadata()));
+  
+  // Her fotoğrafın oranını hesapla
+  const ratios = metadatas.map((meta) => {
+    if (!meta.width || !meta.height) return 1;
+    return meta.width / meta.height;
+  });
+
+  // Ortalama oran hesapla
+  const avgRatio = ratios.reduce((sum, r) => sum + r, 0) / ratios.length;
+
+  // Orana göre dinamik boyut belirle
+  const canvasWidth = 1600;
+  const canvasHeight = Math.round(canvasWidth / avgRatio);
+  const padding = 14;
+  const gap = source.length >= 3 ? 12 : 16;
+  const outerBackground = { r: 255, g: 255, b: 255, alpha: 1 };
+  const panelBackground = { r: 241, g: 244, b: 247, alpha: 1 };
+
+  const panelWidth = canvasWidth - (padding * 2);
+  const panelHeight = Math.floor((canvasHeight - (padding * 2) - (gap * (source.length - 1))) / source.length);
 
   const panels = await Promise.all(source.map((buffer) => makePanel(buffer, panelWidth, panelHeight, panelBackground)));
   const composite = panels.map((input, index) => ({
@@ -71,7 +89,7 @@ async function buildVerticalPhotoStack(photoBuffers, layoutMode = 'smart_adaptiv
     top: padding + (index * (panelHeight + gap))
   }));
 
-  return sharp({ create: { width, height, channels: 4, background: outerBackground } })
+  return sharp({ create: { width: canvasWidth, height: canvasHeight, channels: 4, background: outerBackground } })
     .composite(composite)
     .png()
     .toBuffer();
@@ -204,10 +222,10 @@ function dualHeaderSvg(firstName, firstHandle, secondName, secondHandle) {
   return Buffer.from(
     `<svg width="1080" height="1920" xmlns="http://www.w3.org/2000/svg">
       <!-- Original single-profile header is hidden before the two-profile shared header is redrawn. -->
-      <rect x="108" y="188" width="850" height="122" fill="#ffffff"/>
+      <rect x="108" y="188" width="850" height="130" fill="#ffffff"/>
 
-      <text x="226" y="246" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700" fill="#0f172a">${escapeXml(firstName)}</text>
-      <text x="226" y="279" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" fill="#6b7280">${escapeXml(firstHandle)}</text>
+      <text x="226" y="245" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="700" fill="#0f172a">${escapeXml(firstName)}</text>
+      <text x="226" y="275" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="400" fill="#6b7280">${escapeXml(firstHandle)}</text>
 
       <g transform="translate(465 233)" fill="none" stroke="#536471" stroke-width="3.3" stroke-linecap="round" stroke-linejoin="round">
         <path d="M2 11h26l-6-6"/>
@@ -216,8 +234,8 @@ function dualHeaderSvg(firstName, firstHandle, secondName, secondHandle) {
         <path d="M10 21l-6 6 6 6"/>
       </g>
 
-      <text x="590" y="246" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700" fill="#0f172a">${escapeXml(secondName)}</text>
-      <text x="590" y="279" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="400" fill="#6b7280">${escapeXml(secondHandle)}</text>
+      <text x="590" y="245" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" fill="#0f172a">${escapeXml(secondName)}</text>
+      <text x="590" y="275" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="400" fill="#6b7280">${escapeXml(secondHandle)}</text>
     </svg>`
   );
 }
@@ -240,45 +258,45 @@ function tripleHeaderSvg(firstName, firstHandle, secondName, secondHandle, third
   return Buffer.from(
     `<svg width="1080" height="1920" xmlns="http://www.w3.org/2000/svg">
       <!-- Original single-profile header is hidden before the three-profile ortak header is redrawn. -->
-      <rect x="108" y="188" width="790" height="122" fill="#ffffff"/>
+      <rect x="108" y="188" width="840" height="130" fill="#ffffff"/>
 
-      <text x="190" y="236" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="#0f172a">${escapeXml(firstName)}</text>
-      <text x="190" y="264" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="400" fill="#6b7280">${escapeXml(firstHandle)}</text>
+      <text x="190" y="235" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="700" fill="#0f172a">${escapeXml(firstName)}</text>
+      <text x="190" y="262" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#6b7280">${escapeXml(firstHandle)}</text>
 
-      <g transform="translate(372 224)" fill="none" stroke="#536471" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+      <g transform="translate(370 222)" fill="none" stroke="#536471" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
         <path d="M2 10h22l-5-5"/>
         <path d="M19 5l6 6-6 6"/>
         <path d="M27 26H5l5 5"/>
         <path d="M10 21l-6 6 6 6"/>
       </g>
 
-      <text x="480" y="236" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="#0f172a">${escapeXml(secondName)}</text>
-      <text x="480" y="264" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="400" fill="#6b7280">${escapeXml(secondHandle)}</text>
+      <text x="490" y="235" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="700" fill="#0f172a">${escapeXml(secondName)}</text>
+      <text x="490" y="262" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#6b7280">${escapeXml(secondHandle)}</text>
 
-      <g transform="translate(632 224)" fill="none" stroke="#536471" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+      <g transform="translate(640 222)" fill="none" stroke="#536471" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
         <path d="M2 10h22l-5-5"/>
         <path d="M19 5l6 6-6 6"/>
         <path d="M27 26H5l5 5"/>
         <path d="M10 21l-6 6 6 6"/>
       </g>
 
-      <text x="735" y="236" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#0f172a">${escapeXml(thirdName)}</text>
-      <text x="735" y="264" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="400" fill="#6b7280">${escapeXml(thirdHandle)}</text>
+      <text x="760" y="235" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#0f172a">${escapeXml(thirdName)}</text>
+      <text x="760" y="262" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="400" fill="#6b7280">${escapeXml(thirdHandle)}</text>
     </svg>`
   );
 }
 
 async function applyTripleHeaderOverlay(basePng, primaryLogoPath, secondLogoPath, thirdLogoPath, firstName, firstHandle, secondName, secondHandle, thirdName, thirdHandle) {
   const avatarOptions = { trimLogo: true, innerPadding: 2, showBorder: true, borderColor: '#e5e7eb' };
-  const firstAvatar = await makeRoundAvatar(primaryLogoPath, 66, avatarOptions);
-  const secondAvatar = await makeRoundAvatar(secondLogoPath, 66, avatarOptions);
-  const thirdAvatar = await makeRoundAvatar(thirdLogoPath, 66, avatarOptions);
+  const firstAvatar = await makeRoundAvatar(primaryLogoPath, 60, avatarOptions);
+  const secondAvatar = await makeRoundAvatar(secondLogoPath, 60, avatarOptions);
+  const thirdAvatar = await makeRoundAvatar(thirdLogoPath, 60, avatarOptions);
   return sharp(basePng)
     .composite([
       { input: tripleHeaderSvg(firstName, firstHandle, secondName, secondHandle, thirdName, thirdHandle), left: 0, top: 0 },
-      { input: firstAvatar, left: 122, top: 211 },
-      { input: secondAvatar, left: 410, top: 211 },
-      { input: thirdAvatar, left: 665, top: 211 }
+      { input: firstAvatar, left: 125, top: 215 },
+      { input: secondAvatar, left: 415, top: 215 },
+      { input: thirdAvatar, left: 680, top: 215 }
     ])
     .png()
     .toBuffer();
