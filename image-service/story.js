@@ -1082,43 +1082,13 @@ async function getPhotoSlot(photoBuffer) {
 }
 
 async function makeRoundedPhoto(photoBuffer, w, h, radius) {
-  const blurredBackground = await sharp(photoBuffer)
+  // Blur kaldırıldı, fit: 'cover' kullanıldı
+  const photo = await sharp(photoBuffer)
     .rotate()
     .resize(w, h, {
       fit: 'cover',
       position: 'centre'
     })
-    .blur(18)
-    .modulate({
-      brightness: 0.88,
-      saturation: 0.85
-    })
-    .png()
-    .toBuffer();
-
-  const containedPhoto = await sharp(photoBuffer)
-    .rotate()
-    .resize(w, h, {
-      fit: 'contain',
-      position: 'centre',
-      background: {
-        r: 255,
-        g: 255,
-        b: 255,
-        alpha: 0
-      }
-    })
-    .png()
-    .toBuffer();
-
-  const merged = await sharp(blurredBackground)
-    .composite([
-      {
-        input: containedPhoto,
-        left: 0,
-        top: 0
-      }
-    ])
     .png()
     .toBuffer();
 
@@ -1136,7 +1106,7 @@ async function makeRoundedPhoto(photoBuffer, w, h, radius) {
     </svg>
   `);
 
-  return sharp(merged)
+  return sharp(photo)
     .composite([
       {
         input: mask,
