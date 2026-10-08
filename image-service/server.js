@@ -48,8 +48,8 @@ function getMosaicPreset(layoutMode, photoCount) {
 async function makePanel(buffer, width, height, background) {
   return sharp(buffer)
     .rotate()
-    .resize({ width, height, fit: 'contain', background: { r: 255, g: 255, b: 255, alpha: 0 } })
-    .flatten({ background: { r: 255, g: 255, b: 255, alpha: 0 } })
+    .resize({ width, height, fit: 'cover', position: 'center' })
+    .flatten({ background })
     .png()
     .toBuffer();
 }
