@@ -57,36 +57,40 @@ async function makePanel(buffer, width, height, background) {
 async function buildVerticalPhotoStack(photoBuffers, layoutMode = 'smart_adaptive') {
   const source = Array.isArray(photoBuffers) ? photoBuffers.filter(Boolean).slice(0, 4) : [];
   if (!source.length) return null;
-  if (source.length === 1) return source[0];
+  if (source.length === 1) return source[0]; // Tek fotoğraf - doğrudan orijinali döndür
 
-  // Fotoğraf metadata'larını al
+  // Birden fazla fotoğraf - dikey stack
   const metadatas = await Promise.all(source.map((buffer) => sharp(buffer).metadata()));
   
-  // Her fotoğrafın oranını hesapla
-  const ratios = metadatas.map((meta) => {
-    if (!meta.width || !meta.height) return 1;
-    return meta.width / meta.height;
-  });
-
-  // Ortalama oran hesapla
-  const avgRatio = ratios.reduce((sum, r) => sum + r, 0) / ratios.length;
-
-  // Orana göre dinamik boyut belirle
+  // Canvas genişliği sabit
   const canvasWidth = 1600;
-  const canvasHeight = Math.round(canvasWidth / avgRatio);
   const padding = 14;
   const gap = source.length >= 3 ? 12 : 16;
   const outerBackground = { r: 255, g: 255, b: 255, alpha: 1 };
   const panelBackground = { r: 241, g: 244, b: 247, alpha: 1 };
 
-  const panelWidth = canvasWidth - (padding * 2);
-  const panelHeight = Math.floor((canvasHeight - (padding * 2) - (gap * (source.length - 1))) / source.length);
+  // Her fotoğraf için dinamik panel boyutu hesapla (oranı koruyarak)
+  const panelsWithMeta = await Promise.all(source.map(async (buffer, index) => {
+    const meta = metadatas[index];
+    const ratio = meta.width / meta.height;
+    
+    // Fotoğrafın kendi oranı
+    const panelWidth = canvasWidth - (padding * 2);
+    const panelHeight = Math.round(panelWidth / ratio);
+    
+    const panel = await makePanel(buffer, panelWidth, panelHeight, panelBackground);
+    return { panel, height: panelHeight };
+  }));
 
-  const panels = await Promise.all(source.map((buffer) => makePanel(buffer, panelWidth, panelHeight, panelBackground)));
-  const composite = panels.map((input, index) => ({
-    input,
+  // Toplam yüksekliği hesapla
+  const totalPanelHeight = panelsWithMeta.reduce((sum, p) => sum + p.height, 0);
+  const totalGapHeight = gap * (source.length - 1);
+  const canvasHeight = totalPanelHeight + totalGapHeight + (padding * 2);
+
+  const composite = panelsWithMeta.map((item, index) => ({
+    input: item.panel,
     left: padding,
-    top: padding + (index * (panelHeight + gap))
+    top: padding + panelsWithMeta.slice(0, index).reduce((sum, p) => sum + p.height + gap, 0)
   }));
 
   return sharp({ create: { width: canvasWidth, height: canvasHeight, channels: 4, background: outerBackground } })
