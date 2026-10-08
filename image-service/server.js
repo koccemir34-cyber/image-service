@@ -46,19 +46,10 @@ function getMosaicPreset(layoutMode, photoCount) {
 }
 
 async function makePanel(buffer, width, height, background) {
-  // Fotoğrafın dominant rengini al
-  const stats = await sharp(buffer).stats();
-  const dominantColor = {
-    r: stats.dominant.r,
-    g: stats.dominant.g,
-    b: stats.dominant.b,
-    alpha: 1
-  };
-
   return sharp(buffer)
     .rotate()
-    .resize({ width, height, fit: 'contain', background: dominantColor })
-    .flatten({ background: dominantColor })
+    .resize({ width, height, fit: 'contain', background: { r: 255, g: 255, b: 255, alpha: 0 } })
+    .flatten({ background: { r: 255, g: 255, b: 255, alpha: 0 } })
     .png()
     .toBuffer();
 }
