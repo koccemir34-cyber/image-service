@@ -486,8 +486,9 @@ function emojiToTwemojiCode(emoji) {
   for (const char of Array.from(emoji)) {
     const cp = char.codePointAt(0).toString(16).toLowerCase();
 
-    // Twemoji URL içinde FE0F kullanılmaz.
-    if (cp === 'fe0f') {
+    // Twemoji URL içinde FE0F ve skin tone modifierlar kullanılmaz.
+    // Skin tone modifierlar: 1F3FB (light), 1F3FC (medium-light), 1F3FD (medium), 1F3FE (medium-dark), 1F3FF (dark)
+    if (cp === 'fe0f' || cp === '1f3fb' || cp === '1f3fc' || cp === '1f3fd' || cp === '1f3fe' || cp === '1f3ff') {
       continue;
     }
 
@@ -1320,9 +1321,9 @@ async function makeSkStory({ text, photoBuffer = null, engagementSettings = null
         y="${footerY}"
         text-anchor="middle"
         font-family="${TEXT_FONT}"
-        font-size="28"
+        font-size="22"
         font-weight="900"
-        letter-spacing="7"
+        letter-spacing="3"
         fill="#77777a"
       >${esc(CONFIG.footerTitle)}</text>
 
@@ -1331,7 +1332,7 @@ async function makeSkStory({ text, photoBuffer = null, engagementSettings = null
         y="${footerY + 43}"
         text-anchor="middle"
         font-family="${TEXT_FONT}"
-        font-size="23"
+        font-size="20"
         fill="#77777a"
       >${esc(CONFIG.footerUrl)}</text>
     </svg>
