@@ -881,7 +881,7 @@ function iconsSvg(y, stats) {
 
   const iconSize = 27;
   const iconY = y - 1;
-  const textY = y - 1;
+  const textY = y + 13;
 
   const replyX = 128;
   const repostX = 304;
