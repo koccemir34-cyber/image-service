@@ -62,6 +62,10 @@ function isEmojiLike(ch) {
 function fixEmojiSpacing(value) {
   let text = String(value || '');
 
+  // Skin tone modifier karakterlerini emoji'den sonra temizle
+  // Bu karakterler: 🏻 (1F3FB), 🏼 (1F3FC), 🏽 (1F3FD), 🏾 (1F3FE), 🏿 (1F3FF)
+  text = text.replace(/[\u{1F3FB}-\u{1F3FF}]/gu, '');
+
   // Başta kullanılan emoji ile yazı arasında düzgün boşluk.
   text = text.replace(/(🏗️|🏗)\s*/gu, '$1 ');
   text = text.replace(/(🤲)\s*/gu, '$1 ');
@@ -657,11 +661,14 @@ async function renderLineText(line, x, baseline, fontSize, emojiTasks) {
     if (isEmojiLike(part)) {
       await flushBuffer();
 
+      // Skin tone modifier karakterlerini emoji'den temizle
+      const cleanEmoji = part.replace(/[\u{1F3FB}-\u{1F3FF}]/gu, '');
+
       const emojiSize = Math.round(fontSize * 0.98);
       const emojiTop = Math.round(baseline - emojiSize + 6);
 
       emojiTasks.push({
-        emoji: part,
+        emoji: cleanEmoji,
         left: Math.round(cursorX),
         top: emojiTop,
         size: emojiSize
