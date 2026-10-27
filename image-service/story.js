@@ -1219,6 +1219,23 @@ async function makeSkStory({ text, photoBuffer = null, engagementSettings = null
     hasPhoto,
     photoSlot
   );
+  /* SKSTORY_PHOTO_PANEL_FOLLOWS_SOURCE_RATIO_V1: fotoğrafı tam genişlikte, kendi oranıyla yerleştir. */
+  if (hasPhoto && Number(layout.photoW) > 0 && Number(layout.photoH) > 0) {
+    const sourceMeta = await sharp(photoBuffer).metadata();
+    const swapsDimensions = sourceMeta.orientation >= 5 && sourceMeta.orientation <= 8;
+    const sourceWidth = Number(swapsDimensions ? sourceMeta.height : sourceMeta.width);
+    const sourceHeight = Number(swapsDimensions ? sourceMeta.width : sourceMeta.height);
+    if (sourceWidth > 0 && sourceHeight > 0) {
+      const previousPhotoHeight = Number(layout.photoH);
+      const naturalPhotoHeight = Math.max(1, Math.round(Number(layout.photoW) * sourceHeight / sourceWidth));
+      const heightDelta = naturalPhotoHeight - previousPhotoHeight;
+      layout.photoH = naturalPhotoHeight;
+      layout.cardH = Number(layout.cardH) + heightDelta;
+      for (const positionKey of ['timeY', 'dividerY', 'statsY']) {
+        if (Number.isFinite(Number(layout[positionKey]))) layout[positionKey] = Number(layout[positionKey]) + heightDelta;
+      }
+    }
+  }
 
   const renderedText = await renderText(
     layout.lines,
@@ -1244,6 +1261,7 @@ async function makeSkStory({ text, photoBuffer = null, engagementSettings = null
     cardBottom + 58,
     1775
   );
+  const outputHeight = Math.max(HEIGHT, Math.ceil(footerY + 100));
 
   const dateLine = getDateParts();
   const stats = getEngagementStats(engagementSettings);
@@ -1251,7 +1269,7 @@ async function makeSkStory({ text, photoBuffer = null, engagementSettings = null
   const svg = `
     <svg
       width="${WIDTH}"
-      height="${HEIGHT}"
+      height="${outputHeight}"
       xmlns="http://www.w3.org/2000/svg"
     >
       <rect width="100%" height="100%" fill="#202123"/>
