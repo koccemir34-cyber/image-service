@@ -1089,42 +1089,24 @@ async function getPhotoSlot(photoBuffer) {
   }
 }
 
-async function makeRoundedPhoto(photoBuffer, w, h, radius) {
-  // Blur kaldırıldı, fit: 'cover' kullanıldı
-  const photo = await sharp(photoBuffer)
+async function makeRoundedPhoto(buffer, width, height, radius = 18) {
+  const targetWidth = Math.max(1, Math.round(Number(width) || 1));
+  const targetHeight = Math.max(1, Math.round(Number(height) || 1));
+  const cornerRadius = Math.max(0, Math.min(Math.round(Number(radius) || 0), Math.floor(Math.min(targetWidth, targetHeight) / 2)));
+  const background = { r: 248, g: 249, b: 251, alpha: 1 };
+  const fittedPhoto = await sharp(buffer)
     .rotate()
-    .resize(w, h, {
-      fit: 'cover',
-      position: 'centre'
-    })
+    .resize({ width: targetWidth, height: targetHeight, fit: 'contain', background })
     .png()
     .toBuffer();
-
-  const mask = Buffer.from(`
-    <svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">
-      <rect
-        x="0"
-        y="0"
-        width="${w}"
-        height="${h}"
-        rx="${radius}"
-        ry="${radius}"
-        fill="#fff"
-      />
-    </svg>
-  `);
-
-  return sharp(photo)
-    .composite([
-      {
-        input: mask,
-        blend: 'dest-in'
-      }
-    ])
+  const roundedMask = Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${targetWidth}" height="${targetHeight}"><rect width="100%" height="100%" rx="${cornerRadius}" ry="${cornerRadius}" fill="#fff"/></svg>`
+  );
+  return sharp(fittedPhoto)
+    .composite([{ input: roundedMask, blend: 'dest-in' }])
     .png()
     .toBuffer();
 }
-
 function chooseLayout(text, hasPhoto, photoSlot) {
   const base = {
     cardX: 90,

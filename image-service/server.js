@@ -48,7 +48,7 @@ function getMosaicPreset(layoutMode, photoCount) {
 async function makePanel(buffer, width, height, background) {
   return sharp(buffer)
     .rotate()
-    .resize({ width, height, fit: 'cover', position: 'center' })
+    .resize({ width, height, fit: 'contain', background })
     .flatten({ background })
     .png()
     .toBuffer();
@@ -60,7 +60,13 @@ async function buildVerticalPhotoStack(photoBuffers, layoutMode = 'smart_adaptiv
   if (source.length === 1) return source[0]; // Tek fotoğraf - doğrudan orijinali döndür
 
   // Birden fazla fotoğraf - dikey stack
-  const metadatas = await Promise.all(source.map((buffer) => sharp(buffer).metadata()));
+  const metadatas = await Promise.all(source.map(async (buffer) => {
+    const metadata = await sharp(buffer).metadata();
+    const swapsDimensions = metadata.orientation >= 5 && metadata.orientation <= 8;
+    return swapsDimensions
+      ? { ...metadata, width: metadata.height, height: metadata.width }
+      : metadata;
+  }));
   
   // Canvas genişliği sabit
   const canvasWidth = 1600;
@@ -231,15 +237,15 @@ function dualHeaderSvg(firstName, firstHandle, secondName, secondHandle) {
       <text x="226" y="245" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="700" fill="#0f172a">${escapeXml(firstName)}</text>
       <text x="226" y="275" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="400" fill="#6b7280">${escapeXml(firstHandle)}</text>
 
-      <g transform="translate(465 233)" fill="none" stroke="#536471" stroke-width="3.3" stroke-linecap="round" stroke-linejoin="round">
+      <g transform="translate(413 233)" fill="none" stroke="#536471" stroke-width="3.3" stroke-linecap="round" stroke-linejoin="round">
         <path d="M2 11h26l-6-6"/>
         <path d="M22 5l6 6-6 6"/>
         <path d="M30 27H4l6 6"/>
         <path d="M10 21l-6 6 6 6"/>
       </g>
 
-      <text x="590" y="245" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" fill="#0f172a">${escapeXml(secondName)}</text>
-      <text x="590" y="275" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="400" fill="#6b7280">${escapeXml(secondHandle)}</text>
+      <text x="600" y="245" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" fill="#0f172a">${escapeXml(secondName)}</text>
+      <text x="600" y="275" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="400" fill="#6b7280">${escapeXml(secondHandle)}</text>
     </svg>`
   );
 }
@@ -267,7 +273,7 @@ function tripleHeaderSvg(firstName, firstHandle, secondName, secondHandle, third
       <text x="190" y="235" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="700" fill="#0f172a">${escapeXml(firstName)}</text>
       <text x="190" y="262" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#6b7280">${escapeXml(firstHandle)}</text>
 
-      <g transform="translate(370 222)" fill="none" stroke="#536471" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+      <g transform="translate(340 222)" fill="none" stroke="#536471" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
         <path d="M2 10h22l-5-5"/>
         <path d="M19 5l6 6-6 6"/>
         <path d="M27 26H5l5 5"/>
@@ -277,7 +283,7 @@ function tripleHeaderSvg(firstName, firstHandle, secondName, secondHandle, third
       <text x="490" y="235" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="700" fill="#0f172a">${escapeXml(secondName)}</text>
       <text x="490" y="262" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#6b7280">${escapeXml(secondHandle)}</text>
 
-      <g transform="translate(640 222)" fill="none" stroke="#536471" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+      <g transform="translate(625 222)" fill="none" stroke="#536471" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
         <path d="M2 10h22l-5-5"/>
         <path d="M19 5l6 6-6 6"/>
         <path d="M27 26H5l5 5"/>
